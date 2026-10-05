@@ -23,10 +23,10 @@ from src.database.profile import load_profile
 # ─── agent thinking HTML ──────────────────────────────────────────────────────
 
 _AGENT_STEPS = [
-    ("Fetching weather for your location…",    "🌤️"),
-    ("Filtering your wardrobe…",               "👗"),
-    ("Generating outfit combinations…",        "✨"),
-    ("Validating for occasion and weather…",   "✅"),
+    ("Fetching weather for your location…",    ""),
+    ("Filtering your wardrobe",               ""),
+    ("Generating outfit combinations",        ""),
+    ("Validating for occasion and weather",   ""),
 ]
 
 def _thinking_html(active: int = -1) -> str:
@@ -116,13 +116,13 @@ def _outfit_card_html(outfit: dict, idx: int, is_raining: bool = False) -> str:
         prose_lines  = [l.strip() for l in lines if l.strip() and not re.match(r"^\s*[-•*]", l)]
         bullets_html = ""
         if bullet_items:
-            bullets_html = "<ul style='margin:6px 0 0 0;padding-left:18px'>" + \
+            bullets_html = "<ul style='margin:6px 0 0 0;padding-left:18px;color:#166534'>" + \
                            "".join(f"<li style='margin-bottom:3px'>{b}</li>" for b in bullet_items) + \
                            "</ul>"
-        prose_html = "".join(f"<p style='margin:0 0 4px'>{p}</p>" for p in prose_lines)
+        prose_html = "".join(f"<p style='margin:0 0 4px;color:#166534'>{p}</p>" for p in prose_lines)
         why_html = (
             f'<div class="cc-outfit-why">'
-            f'  <div style="font-weight:600;margin-bottom:6px">✅ Why this outfit?</div>'
+            f'  <div style="font-weight:600;margin-bottom:6px;color:#166534">✅ Why this outfit?</div>'
             f'  {prose_html}{bullets_html}'
             f'</div>'
         )
@@ -198,7 +198,7 @@ def build_outfits_tab(prefill_state: gr.State) -> None:
 
             gr.HTML(
                 '<div style="font-size:20px;font-weight:700;color:#1C1C1E;'
-                'padding:8px 0 4px">New Outfit ✨</div>'
+                'padding:8px 0 4px">New Outfit</div>'
             )
 
             # Chat history (shows user bubble + "Got it!" agent ack)
@@ -236,7 +236,7 @@ def build_outfits_tab(prefill_state: gr.State) -> None:
                 gr.HTML(
                     '<div style="font-size:18px;font-weight:700;color:#1C1C1E;'
                     'padding:8px 0;flex:1;text-align:center">'
-                    'Here are 3 outfits for you ✨</div>'
+                    'Your Outfits</div>'
                 )
 
             results_context_html = gr.HTML("")   # e.g. "Semi-formal · Office · Rainy · 24°C"
@@ -483,6 +483,11 @@ def build_outfits_tab(prefill_state: gr.State) -> None:
                     gr.update(visible=False), gr.update(visible=True), gr.update(visible=False),
                     history, outfits, is_raining, "",
                 )
+            
+            # Capture refinement as long-term preference memory
+            from src.database.preferences import add_preference_note
+            add_preference_note("default_user", refinement_text)
+            
             agent = get_agent()
             try:
                 response = agent.chat(refinement_text)

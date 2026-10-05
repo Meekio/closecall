@@ -79,9 +79,9 @@ def _steps_html(phase: str) -> str:
 
     title = {
         "idle":    "",
-        "running": '<div style="font-size:16px;font-weight:600;margin-bottom:10px;color:#1C1C1E">Analyzing your clothes… ✨</div>',
-        "done":    '<div style="font-size:16px;font-weight:600;margin-bottom:10px;color:#22C55E">Item added! ✅</div>',
-        "error":   '<div style="font-size:16px;font-weight:600;margin-bottom:10px;color:#EF4444">Tagging failed ❌</div>',
+        "running": '<div style="font-size:16px;font-weight:600;margin-bottom:10px;color:#1C1C1E">Analyzing your clothes...</div>',
+        "done":    '<div style="font-size:16px;font-weight:600;margin-bottom:10px;color:#22C55E">Item added!</div>',
+        "error":   '<div style="font-size:16px;font-weight:600;margin-bottom:10px;color:#EF4444">Tagging failed</div>',
     }[phase]
 
     if phase == "idle":
@@ -213,7 +213,7 @@ def build_add_clothes_tab(go_edit_item_fn) -> gr.State:
         )
 
         tag_btn = gr.Button(
-            "✨  Tag & Add to Wardrobe",
+            "Tag & Add to Wardrobe",
             elem_classes=["cc-btn-primary"],
         )
 

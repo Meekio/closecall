@@ -31,13 +31,28 @@ body, .gradio-container {
     padding: 0 !important;
 }
 
-/* Constrain width like a phone shell */
+/* Responsive container - mobile width on small screens, wider on desktop */
 .gradio-container {
-    max-width: 480px !important;
+    max-width: 100% !important;
     margin: 0 auto !important;
     min-height: 100vh !important;
     position: relative !important;
-    box-shadow: 0 0 40px rgba(0,0,0,0.12) !important;
+}
+
+/* On desktop (wider than 768px), constrain to comfortable reading width */
+@media (min-width: 768px) {
+    .gradio-container {
+        max-width: 900px !important;
+        box-shadow: 0 0 40px rgba(0,0,0,0.08) !important;
+    }
+}
+
+/* On mobile, no shadow - full bleed */
+@media (max-width: 767px) {
+    .gradio-container {
+        max-width: 480px !important;
+        margin: 0 auto !important;
+    }
 }
 
 footer, .built-with { display: none !important; }
@@ -627,7 +642,48 @@ footer, .built-with { display: none !important; }
 
 /* Responsive: on actual desktop don't cap at 480px */
 @media (min-width: 768px) {
-    .gradio-container { max-width: 480px !important; }
+    .cc-screen {
+        padding: 32px 48px 80px !important;
+    }
+    
+    /* Desktop: tabs at top, not bottom */
+    .tab-nav {
+        position: static !important;
+        border-top: none !important;
+        border-bottom: 1px solid #E5E7EB !important;
+        background: #FFFFFF !important;
+    }
+    
+    .tab-nav button {
+        font-size: 14px !important;
+        padding: 14px 24px !important;
+        border-bottom: 2px solid transparent !important;
+        border-top: none !important;
+    }
+    
+    .tab-nav button.selected {
+        border-bottom-color: #8B5CF6 !important;
+        border-top: none !important;
+    }
+    
+    /* Desktop: wardrobe grid 4 columns */
+    .cc-wardrobe-grid {
+        grid-template-columns: repeat(4, 1fr) !important;
+        gap: 12px !important;
+    }
+    
+    /* Desktop: outfit cards side by side if needed */
+    .cc-outfit-tab {
+        max-width: 100% !important;
+    }
+}
+
+/* Mobile specific */
+@media (max-width: 767px) {
+    .tab-nav {
+        position: sticky !important;
+        bottom: 0 !important;
+    }
 }
 
 /* Prevent iOS font size inflation */

@@ -28,7 +28,7 @@ from src.ui.profile_tab     import build_profile_tab
 # ─── navigation helpers ───────────────────────────────────────────────────────
 
 # We use a single gr.Tabs with 4 tabs whose labels act as the bottom nav:
-#   🏠 Home | 👗 Wardrobe | ✨ Outfits | 👤 Profile
+#   Home | Wardrobe | Outfits | Profile
 #
 # "Add Clothes" and "Item Detail" live inside the Wardrobe tab as sub-views
 # toggled by gr.Column(visible=...) — matching the wireframe's nav flow.
@@ -58,14 +58,14 @@ def build_app() -> gr.Blocks:
             # ════════════════════════════════════════════════════════════════
             # TAB 1 — Home  (screens 1 + 2)
             # ════════════════════════════════════════════════════════════════
-            with gr.Tab("🏠 Home", id="tab-home") as tab_home:
+            with gr.Tab("Home", id="tab-home") as tab_home:
 
                 with gr.Column(visible=True) as splash_col:
                     gr.HTML("""
 <div style="min-height:100vh;display:flex;flex-direction:column;
      align-items:center;justify-content:center;padding:40px 24px;
      text-align:center;background:linear-gradient(160deg,#FDF6F0 0%,#F3E8FF 100%)">
-  <div style="font-size:72px;margin-bottom:20px">👗</div>
+  <div style="font-size:48px;margin-bottom:20px;font-weight:300;letter-spacing:2px">CC</div>
   <div style="font-size:40px;font-weight:800;letter-spacing:-1px;color:#1C1C1E">
     CloseCall</div>
   <div style="font-size:14px;color:#6B7280;margin:10px 0 40px;
@@ -91,7 +91,7 @@ def build_app() -> gr.Blocks:
 
                     gr.HTML(
                         '<div style="padding:8px 0 4px">'
-                        '  <div style="font-size:22px;font-weight:700;color:#1C1C1E">Hi! ✨</div>'
+                        '  <div style="font-size:22px;font-weight:700;color:#1C1C1E">Hi!</div>'
                         '  <div style="font-size:15px;color:#6B7280;margin-top:2px">'
                         '    What are you dressing for today?</div>'
                         '</div>'
@@ -127,8 +127,8 @@ def build_app() -> gr.Blocks:
 
                     gr.HTML('<div class="cc-label" style="margin-top:20px">Quick Actions</div>')
                     with gr.Row():
-                        home_btn_add  = gr.Button("📷\nAdd Clothes",  elem_classes=["cc-action-card"])
-                        home_btn_ward = gr.Button("👗\nMy Wardrobe",  elem_classes=["cc-action-card"])
+                        home_btn_add  = gr.Button("Add Clothes",  elem_classes=["cc-action-card"])
+                        home_btn_ward = gr.Button("My Wardrobe",  elem_classes=["cc-action-card"])
 
                     # Chips fill input
                     for chip, text in [
@@ -150,7 +150,7 @@ def build_app() -> gr.Blocks:
             # ════════════════════════════════════════════════════════════════
             # TAB 2 — Wardrobe  (screens 3, 4, 5, 6)
             # ════════════════════════════════════════════════════════════════
-            with gr.Tab("👗 Wardrobe", id="tab-wardrobe") as tab_wardrobe:
+            with gr.Tab("Wardrobe", id="tab-wardrobe") as tab_wardrobe:
 
                 with gr.Column(visible=True) as wv_grid:
                     build_wardrobe_tab(go_edit_fn=lambda iid: None)  # wired below
@@ -174,7 +174,7 @@ def build_app() -> gr.Blocks:
                 # We add it here as a proper button since build_wardrobe_tab's
                 # go_edit_fn lambda can't switch sub-views without the Column refs.
                 add_clothes_btn_ward = gr.Button(
-                    "📷 Add Clothes",
+                    "Add Clothes",
                     elem_classes=["cc-btn-violet"],
                 )
                 add_clothes_btn_ward.click(
@@ -185,13 +185,13 @@ def build_app() -> gr.Blocks:
             # ════════════════════════════════════════════════════════════════
             # TAB 3 — Outfits  (screens 7–10)
             # ════════════════════════════════════════════════════════════════
-            with gr.Tab("✨ Outfits", id="tab-outfits") as tab_outfits:
+            with gr.Tab("Outfits", id="tab-outfits") as tab_outfits:
                 build_outfits_tab(prefill_state=prefill_request_state)
 
             # ════════════════════════════════════════════════════════════════
             # TAB 4 — Profile  (screen 11)
             # ════════════════════════════════════════════════════════════════
-            with gr.Tab("👤 Profile", id="tab-profile"):
+            with gr.Tab("Profile", id="tab-profile"):
                 build_profile_tab()
 
         # ── Cross-tab wiring: Home → Outfits ─────────────────────────────────

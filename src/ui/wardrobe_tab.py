@@ -55,7 +55,7 @@ def _item_card_html(item: dict) -> str:
         f'border-radius:10px" />'
         if img_src else
         '<div style="width:100%;height:100%;background:#F3F4F6;border-radius:10px;'
-        'display:flex;align-items:center;justify-content:center;font-size:28px">👕</div>'
+        'display:flex;align-items:center;justify-content:center;font-size:14px;color:#9CA3AF;font-weight:600">•</div>'
     )
 
     return f"""
@@ -81,7 +81,7 @@ def _grid_html(items: list[dict]) -> str:
     if not items:
         return (
             '<div style="text-align:center;padding:48px 24px;color:#9CA3AF">'
-            '  <div style="font-size:48px;margin-bottom:12px">👗</div>'
+            '  <div style="font-size:16px;margin-bottom:12px;color:#9CA3AF;font-weight:600">WARDROBE</div>'
             '  <div style="font-size:15px;font-weight:600;color:#6B7280">No items yet</div>'
             '  <div style="font-size:13px;margin-top:4px">Go to Add Clothes to upload your wardrobe.</div>'
             '</div>'

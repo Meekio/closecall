@@ -22,7 +22,7 @@ from src.database.db import get_all_items
 def _weather_html() -> str:
     profile = load_profile()
     w = get_weather(profile.get("location", "Mumbai"))
-    icon = "🌧️" if w.get("is_raining") else "🌤️"
+    icon = "Rain" if w.get("is_raining") else ""
     cond = w.get("description", w.get("condition", ""))
     temp = w.get("temperature_c", "–")
     city = w.get("location", profile.get("location", ""))
@@ -47,7 +47,7 @@ _SPLASH_HTML = """
 <div class="cc-splash-bg" style="min-height:100vh;display:flex;flex-direction:column;
      align-items:center;justify-content:center;padding:40px 24px;text-align:center;
      background:linear-gradient(160deg,#FDF6F0 0%,#F3E8FF 100%)">
-  <div style="font-size:72px;margin-bottom:20px">👗</div>
+  <div style="font-size:48px;margin-bottom:20px;font-weight:300;letter-spacing:2px">CC</div>
   <div class="cc-splash-logo" style="font-size:40px;font-weight:800;
        letter-spacing:-1px;color:#1C1C1E">CloseCall</div>
   <div style="font-size:16px;color:#6B7280;margin:10px 0 48px;line-height:1.6;max-width:280px">
@@ -83,7 +83,7 @@ def build_home_tab(go_add_clothes_fn, go_wardrobe_fn, on_request_fn) -> None:
             gr.HTML(
                 '<div style="padding:8px 0 4px">'
                 '  <div style="font-size:22px;font-weight:700;color:#1C1C1E">'
-                '    Hi! ✨'
+                '    Hi!'
                 '  </div>'
                 '  <div style="font-size:15px;color:#6B7280;margin-top:2px">'
                 '    What are you dressing for today?'
@@ -132,8 +132,8 @@ def build_home_tab(go_add_clothes_fn, go_wardrobe_fn, on_request_fn) -> None:
         # ── Quick actions ─────────────────────────────────────────────────────
         gr.HTML('<div class="cc-label" style="margin-top:20px">Quick Actions</div>')
         with gr.Row():
-            btn_add  = gr.Button("📷\nAdd Clothes",    elem_classes=["cc-action-card"])
-            btn_ward = gr.Button("👗\nMy Wardrobe",    elem_classes=["cc-action-card"])
+            btn_add  = gr.Button("Add Clothes",    elem_classes=["cc-action-card"])
+            btn_ward = gr.Button("My Wardrobe",    elem_classes=["cc-action-card"])
 
         # ── Wire chips → fill input ───────────────────────────────────────────
         for chip, text in [

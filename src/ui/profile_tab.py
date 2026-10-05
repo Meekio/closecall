@@ -133,7 +133,7 @@ def build_profile_tab() -> None:
         with gr.Group(elem_classes=["cc-card"]):
             gr.HTML(
                 '<div class="cc-profile-row" style="border-bottom:none">'
-                '  <span><span class="cc-profile-row-icon">👗</span>My Wardrobe</span>'
+                '  <span><span class="cc-profile-row-icon">•</span>My Wardrobe</span>'
                 '  <span style="font-size:12px;color:#6B7280">View and manage your clothes</span>'
                 '</div>'
             )

@@ -2,6 +2,7 @@
 Database engine, session factory, and helper functions.
 """
 
+import sqlite3
 import uuid
 from pathlib import Path
 from contextlib import contextmanager
@@ -31,9 +32,21 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
+def get_connection():
+    """Return a raw sqlite3 connection for lightweight tables (preferences, etc.)."""
+    # Extract the actual file path from the SQLAlchemy URL
+    if _db_url.startswith("sqlite:///"):
+        db_path = _db_url[len("sqlite:///"):]
+        return sqlite3.connect(db_path)
+    raise ValueError(f"get_connection only supports SQLite, got {_db_url}")
+
+
 def init_db() -> None:
     """Create all tables if they don't already exist."""
     Base.metadata.create_all(bind=engine)
+    # Also initialize preferences table
+    from src.database.preferences import init_preferences_table
+    init_preferences_table()
 
 
 @contextmanager
