@@ -1,4 +1,4 @@
-"""
+﻿"""
 CloseCall — Responsive CSS
 Design tokens:
   Background   : #FAF9F7  (warm off-white / cream)
@@ -423,10 +423,13 @@ div[class*="tab-nav"] button.selected,
    AGENT PROCESSING STEPS
 ═══════════════════════════════════════════════════════════ */
 .cc-agent-steps {
-    background: #F8F7F5 !important;
+    background: #FFFFFF !important;
     border-radius: 12px !important;
     border: 1px solid #E8E5E0 !important;
     padding: 20px 24px !important;
+}
+.cc-agent-steps div, .cc-agent-steps span {
+    color: #1A1A1A !important;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -587,11 +590,12 @@ div[class*="tab-nav"] button.selected,
 .gr-form label, .gr-padded label { color: #6B7280 !important; font-size: 13px !important; }
 
 /* Gradio accordion flatten */
-.gr-accordion {
+.gr-accordion, details, details > summary {
     background: #FFFFFF !important;
     border: 1px solid #E8E5E0 !important;
     border-radius: 12px !important;
     box-shadow: none !important;
+    color: #1A1A1A !important;
 }
 
 /* Chatbot bubbles */
@@ -605,7 +609,9 @@ div[class*="tab-nav"] button.selected,
 input[type=range] { accent-color: #7C5CFC !important; }
 
 /* Dropdown */
-.cc-select select, .cc-select .wrap-inner {
+.cc-select select, .cc-select .wrap-inner,
+.cc-select input, .cc-select ul, .cc-select li,
+.cc-select [data-testid="dropdown"] {
     background: #FFFFFF !important;
     border: 1.5px solid #E8E5E0 !important;
     border-radius: 10px !important;
@@ -613,9 +619,45 @@ input[type=range] { accent-color: #7C5CFC !important; }
     color: #1A1A1A !important;
 }
 
-/* Tab content area — no default padding/border */
-.tabitem { background: transparent !important; border: none !important; padding: 0 !important; }
+/* Dropdown open list */
+.cc-select ul {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.10) !important;
+    border-radius: 10px !important;
+    padding: 4px !important;
+}
+.cc-select li {
+    border-radius: 6px !important;
+    padding: 8px 12px !important;
+    color: #1A1A1A !important;
+    font-size: 14px !important;
+}
+.cc-select li:hover, .cc-select li.selected {
+    background: #EDE9FE !important;
+    color: #5B3FD4 !important;
+}
+
+/* Label + reset row above textbox */
+.cc-label-row {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    margin-bottom: 8px !important;
+}
+.cc-label-row > * { flex-shrink: 0 !important; }
+.cc-label-row button {
+    background: transparent !important;
+    border: none !important;
+    color: #9CA3AF !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    cursor: pointer !important;
+    padding: 4px 0 !important;
+}
+.cc-label-row button:hover { color: #7C5CFC !important; }
 
 /* Ensure rows don't add unwanted gutters */
 .gr-row { gap: 0 !important; }
+
+/* Tab content area - no default padding/border */
+.tabitem { background: transparent !important; border: none !important; padding: 0 !important; }
 """

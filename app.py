@@ -337,8 +337,14 @@ def _build_wardrobe_inner():
         return html
 
     def _choices():
-        return [f"{i['item_id']} — {i.get('color','')} {i.get('subtype','')}"
-                for i in get_all_items()]
+        items = get_all_items()
+        result = []
+        for i in items:
+            name = (i.get("label") or
+                    f"{i.get('color','').title()} {i.get('subtype','').replace('_',' ').title()}").strip()
+            status = "● Clean" if i.get("status") == "clean" else "● Dirty"
+            result.append((f"{name}  {status}", i["item_id"]))
+        return result
 
     def _filter(cat_label, search):
         cat   = _CAT_MAP.get(cat_label,"")
@@ -379,19 +385,30 @@ def _build_wardrobe_inner():
         grid_html = gr.HTML(_grid(get_all_items()))
 
         gr.HTML('<hr style="border:none;border-top:1px solid #E8E5E0;margin:32px 0 20px">')
-        gr.HTML('<div style="font-size:11px;font-weight:700;letter-spacing:1px;'
-                'text-transform:uppercase;color:#6B7280;margin-bottom:10px">Edit an item</div>')
-        with gr.Row():
-            with gr.Column(scale=3):
+        gr.HTML("""
+<div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:12px">
+  Select an item to edit its tags
+</div>
+""")
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=4):
                 edit_picker = gr.Dropdown(
                     choices=_choices(), value=None, show_label=False,
-                    allow_custom_value=False, elem_classes=["cc-select"],
-                    label="Select item to edit",
+                    allow_custom_value=False,
+                    label="Choose item",
+                    elem_classes=["cc-select"],
                 )
-            with gr.Column(scale=1, min_width=140):
-                edit_btn = gr.Button("Edit tags →", elem_classes=["cc-btn-secondary"])
+            with gr.Column(scale=1, min_width=60):
+                refresh_picker_btn = gr.Button("↻", elem_classes=["cc-btn-ghost"], size="sm")
+            with gr.Column(scale=1, min_width=120):
+                edit_btn = gr.Button("Edit →", elem_classes=["cc-btn-accent"])
 
         gr.HTML('<div style="height:40px"></div>')
+
+        refresh_picker_btn.click(
+            fn=lambda: gr.update(choices=_choices(), value=None),
+            outputs=[edit_picker],
+        )
 
         for btn, lbl in zip(filter_btns, ["All","Tops","Bottoms","One-pieces","Footwear","Outerwear"]):
             btn.click(
@@ -438,9 +455,9 @@ def _build_add_inner():
             if phase=="done":  return "done"
             return "spin" if i==0 else "wait"
         rows = "".join(
-            f'<div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px;color:#374151">'
+            f'<div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px;color:#1A1A1A">'
             f'<span style="color:{colors[_st(i)]};font-weight:700;width:16px;text-align:center">{icons[_st(i)]}</span>'
-            f'<span>{s}</span></div>'
+            f'<span style="color:#1A1A1A;font-weight:500">{s}</span></div>'
             for i,s in enumerate(_STEPS)
         )
         hd = {"running":'<div style="font-size:13px;font-weight:700;letter-spacing:1px;'

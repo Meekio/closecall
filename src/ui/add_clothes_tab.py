@@ -67,10 +67,10 @@ def _steps_html(phase: str) -> str:
 
     rows = "".join(
         f'<div style="display:flex;align-items:center;gap:10px;padding:6px 0;'
-        f'font-size:14px;color:#374151">'
+        f'font-size:14px;color:#1A1A1A">'
         f'  <span style="color:{colors[_state(i)]};font-weight:700;width:16px;'
         f'text-align:center">{icons[_state(i)]}</span>'
-        f'  <span>{step}</span>'
+        f'  <span style="color:#1A1A1A;font-weight:500">{step}</span>'
         f'</div>'
         for i, step in enumerate(_STEPS)
     )
