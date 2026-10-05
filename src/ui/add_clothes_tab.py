@@ -1,12 +1,14 @@
 """
-Screen 3 (Add Clothes) + Screen 4 (AI Tagging / Processing)
-─────────────────────────────────────────────────────────────
+Add Clothes Tab — CloseCall
+────────────────────────────
+Desktop: upload panel and tag-result metadata shown side-by-side.
+Mobile:  stacked vertically.
+
 Flow:
-  1. User uploads a photo (camera or gallery).
-  2. "Tag & Add" button calls Gemini vision.
-  3. A step-by-step progress display appears during tagging.
-  4. On success, a result card shows the detected tags.
-  5. "Add Another" resets. "Edit Tags" switches to item-detail view.
+  1. Upload photo.
+  2. Click "Analyze item" → vision tagging with step checklist.
+  3. Review detected tags.
+  4. Save or Edit tags.
 """
 
 from __future__ import annotations
@@ -17,20 +19,11 @@ from PIL import Image
 from src.vision.uploader import upload_from_pil
 
 
-# ─── Gradio 6 image coercion ──────────────────────────────────────────────────
+# ─── image coercion (Gradio 6 FileData compat) ────────────────────────────────
 
 def _to_pil(image) -> Image.Image | None:
-    """
-    Gradio 6 passes gr.Image(type='pil') as either:
-      - A PIL Image  (older behaviour, still happens sometimes)
-      - A dict       {'path': '/tmp/...', 'url': 'http://...'}  (Gradio 6 FileData)
-      - None
-    Handles both, plus AVIF / HEIC by reading raw bytes.
-    """
     if image is None:
         return None
-
-    # Gradio 6 FileData dict
     if isinstance(image, dict):
         path = image.get("path", "")
         if not path:
@@ -39,94 +32,108 @@ def _to_pil(image) -> Image.Image | None:
             return Image.open(path).convert("RGB")
         except Exception:
             try:
-                data = open(path, "rb").read()
-                return Image.open(io.BytesIO(data)).convert("RGB")
+                return Image.open(io.BytesIO(open(path, "rb").read())).convert("RGB")
             except Exception:
                 return None
-
-    # Already PIL
     if isinstance(image, Image.Image):
         return image.convert("RGB")
-
     return None
 
 
-# ─── progress HTML helpers ────────────────────────────────────────────────────
+# ─── step checklist HTML ──────────────────────────────────────────────────────
+
+_STEPS = [
+    "Category detected",
+    "Type detected",
+    "Colour detected",
+    "Formality estimated",
+    "Season assessed",
+]
 
 def _steps_html(phase: str) -> str:
-    """
-    phase: "idle" | "running" | "done" | "error"
-    Returns the step checklist HTML shown during/after tagging.
-    """
-    steps = [
-        ("Identifying item type",      "done"    if phase in ("done","error") else ("spin" if phase=="running" else "wait")),
-        ("Detecting color and style",   "done"    if phase in ("done","error") else ("spin" if phase=="running" else "wait")),
-        ("Estimating formality",        "done"    if phase == "done"           else ("spin" if phase=="running" else "wait")),
-        ("Checking season suitability", "done"    if phase == "done"           else "wait"),
-        ("Saving to your wardrobe",     "done"    if phase == "done"           else "wait"),
-    ]
-    icons = {"done": "✅", "spin": "⏳", "wait": "○", "error": "❌"}
-    colors = {"done": "#22C55E", "spin": "#8B5CF6", "wait": "#D1D5DB", "error": "#EF4444"}
-
-    rows = ""
-    for label, state in steps:
-        rows += (
-            f'<div class="cc-agent-step-item" style="color:{colors[state]}">'
-            f'  <span>{icons[state]}</span>'
-            f'  <span style="font-size:14px;color:#374151">{label}</span>'
-            f'</div>'
-        )
-
-    title = {
-        "idle":    "",
-        "running": '<div style="font-size:16px;font-weight:600;margin-bottom:10px;color:#1C1C1E">Analyzing your clothes...</div>',
-        "done":    '<div style="font-size:16px;font-weight:600;margin-bottom:10px;color:#22C55E">Item added!</div>',
-        "error":   '<div style="font-size:16px;font-weight:600;margin-bottom:10px;color:#EF4444">Tagging failed</div>',
-    }[phase]
-
+    """phase: idle | running | done | error"""
     if phase == "idle":
         return ""
 
-    return f'<div class="cc-agent-steps">{title}{rows}</div>'
+    colors  = {"done": "#16A34A", "spin": "#7C5CFC", "wait": "#D1D5DB", "error": "#DC2626"}
+    icons   = {"done": "✓", "spin": "…", "wait": "○", "error": "✕"}
+
+    def _state(i):
+        if phase == "error":
+            return "error" if i == 0 else "wait"
+        if phase == "done":
+            return "done"
+        return "spin" if i == 0 else "wait"
+
+    rows = "".join(
+        f'<div style="display:flex;align-items:center;gap:10px;padding:6px 0;'
+        f'font-size:14px;color:#374151">'
+        f'  <span style="color:{colors[_state(i)]};font-weight:700;width:16px;'
+        f'text-align:center">{icons[_state(i)]}</span>'
+        f'  <span>{step}</span>'
+        f'</div>'
+        for i, step in enumerate(_STEPS)
+    )
+
+    heading = {
+        "running": '<div style="font-size:13px;font-weight:700;letter-spacing:1px;'
+                   'text-transform:uppercase;color:#7C5CFC;margin-bottom:12px">'
+                   'Analyzing your item…</div>',
+        "done":    '<div style="font-size:13px;font-weight:700;letter-spacing:1px;'
+                   'text-transform:uppercase;color:#16A34A;margin-bottom:12px">'
+                   'Item tagged ✓</div>',
+        "error":   '<div style="font-size:13px;font-weight:700;letter-spacing:1px;'
+                   'text-transform:uppercase;color:#DC2626;margin-bottom:12px">'
+                   'Tagging failed</div>',
+    }.get(phase, "")
+
+    return f'<div class="cc-agent-steps">{heading}{rows}</div>'
 
 
-def _result_card_html(item: dict) -> str:
-    seasons = ", ".join(item.get("season") or [])
-    rain = "✅ Yes" if item.get("rain_suitable") else "No"
-    conf = f"{(item.get('confidence') or 0)*100:.0f}%"
-    formality_labels = {1:"Loungewear",2:"Casual",3:"Smart Casual",4:"Business Casual",5:"Formal"}
-    formality_str = formality_labels.get(item.get("formality",2), str(item.get("formality","")))
+# ─── result card HTML ─────────────────────────────────────────────────────────
+
+def _result_html(item: dict) -> str:
+    name     = f"{item.get('color','').title()} {item.get('subtype','').replace('_',' ').title()}".strip()
+    seasons  = ", ".join(item.get("season") or [])
+    rain     = "Yes" if item.get("rain_suitable") else "No"
+    conf_pct = int((item.get("confidence") or 0) * 100)
+    fmap     = {1:"Loungewear",2:"Casual",3:"Smart casual",4:"Business casual",5:"Formal"}
+    formality_str = fmap.get(item.get("formality", 2), "")
+
+    rows = [
+        ("Category",  item.get("category","").title()),
+        ("Type",      item.get("subtype","").replace("_"," ").title()),
+        ("Colour",    item.get("color","").title()),
+        ("Formality", formality_str),
+        ("Season",    seasons),
+        ("Rain",      rain),
+        ("Status",    item.get("status","clean").title()),
+    ]
+    rows_html = "".join(
+        f'<div style="display:flex;justify-content:space-between;align-items:center;'
+        f'padding:10px 0;border-bottom:1px solid #F0EDE8;font-size:14px">'
+        f'  <span style="color:#374151;font-weight:500">{label}</span>'
+        f'  <span style="color:#1A1A1A;font-weight:600">{value}</span>'
+        f'</div>'
+        for label, value in rows
+    )
+
+    bar_width = f"{conf_pct}%"
+
     return f"""
-<div class="cc-card" style="margin-top:12px">
-  <div style="font-size:15px;font-weight:600;color:#1C1C1E;margin-bottom:12px">
-    {item.get('color','').title()} {item.get('subtype','').replace('_',' ').title()}
-    <span style="font-size:12px;color:#6B7280;font-weight:400;margin-left:6px">(confidence: {conf})</span>
+<div class="cc-card" style="margin-top:0">
+  <div style="font-size:17px;font-weight:700;color:#1A1A1A;margin-bottom:16px">{name}</div>
+  {rows_html}
+  <div style="margin-top:16px">
+    <div style="font-size:12px;color:#6B7280;margin-bottom:6px;font-weight:500">
+      AI confidence</div>
+    <div class="cc-confidence-bar">
+      <div class="cc-confidence-fill" style="width:{bar_width}"></div>
+    </div>
+    <div style="font-size:12px;color:#7C5CFC;margin-top:4px;font-weight:600">
+      {conf_pct}%</div>
   </div>
-  <div class="cc-tag-row">
-    <span class="cc-tag-label">Category</span>
-    <span style="font-size:14px;color:#1C1C1E;font-weight:500">{item.get('category','').title()}</span>
-  </div>
-  <div class="cc-tag-row">
-    <span class="cc-tag-label">Subtype</span>
-    <span style="font-size:14px;color:#1C1C1E;font-weight:500">{item.get('subtype','').replace('_',' ').title()}</span>
-  </div>
-  <div class="cc-tag-row">
-    <span class="cc-tag-label">Color</span>
-    <span style="font-size:14px;color:#1C1C1E;font-weight:500">{item.get('color','').title()}</span>
-  </div>
-  <div class="cc-tag-row">
-    <span class="cc-tag-label">Formality</span>
-    <span style="font-size:14px;color:#1C1C1E;font-weight:500">{formality_str}</span>
-  </div>
-  <div class="cc-tag-row">
-    <span class="cc-tag-label">Season(s)</span>
-    <span style="font-size:14px;color:#1C1C1E;font-weight:500">{seasons}</span>
-  </div>
-  <div class="cc-tag-row" style="border-bottom:none">
-    <span class="cc-tag-label">Rain suitable</span>
-    <span style="font-size:14px;color:#1C1C1E;font-weight:500">{rain}</span>
-  </div>
-  <div style="margin-top:8px;font-size:12px;color:#9CA3AF">ID: {item.get('item_id','')}</div>
+  <div style="font-size:11px;color:#C8C3BB;margin-top:10px">ID: {item.get('item_id','')}</div>
 </div>
 """
 
@@ -134,25 +141,19 @@ def _result_card_html(item: dict) -> str:
 # ─── event handlers ───────────────────────────────────────────────────────────
 
 def handle_tag(image, label: str):
-    """Run vision tagging. Accepts PIL Image or Gradio 6 FileData dict."""
     pil = _to_pil(image)
-
     if pil is None:
-        return (
-            '<div style="color:#EF4444;padding:8px">Please upload a photo first.</div>',
-            "",
-            "",
-            gr.update(visible=False),
-        )
-
+        err = '<div class="cc-error-box" style="margin-top:0"><strong>No image.</strong> Please upload a photo first.</div>'
+        return _steps_html("error"), err, "", gr.update(visible=False)
     try:
-        item = upload_from_pil(pil, label=label.strip() or None)
+        item   = upload_from_pil(pil, label=label.strip() or None)
         steps  = _steps_html("done")
-        result = _result_card_html(item)
+        result = _result_html(item)
         return steps, result, item["item_id"], gr.update(visible=True)
     except Exception as exc:
-        steps = _steps_html("error") + f'<div style="color:#EF4444;font-size:13px;padding:4px 0">{exc}</div>'
-        return steps, "", "", gr.update(visible=False)
+        steps = _steps_html("error")
+        err   = f'<div class="cc-error-box" style="margin-top:8px">{exc}</div>'
+        return steps, err, "", gr.update(visible=False)
 
 
 def handle_reset():
@@ -165,78 +166,103 @@ def build_add_clothes_tab(go_edit_item_fn) -> gr.State:
     """
     Build the Add Clothes tab.
 
-    Parameters
-    ----------
-    go_edit_item_fn : callable(item_id: str)
-        Called when the user clicks "Edit Tags" after a successful upload.
-        Should pre-load that item into the Item Detail tab and switch to it.
-
     Returns
     -------
-    gr.State
-        The state component holding the last uploaded item_id.
+    gr.State  — holds the last uploaded item_id (used by edit button).
     """
 
     last_item_id = gr.State("")
 
-    with gr.Column(elem_classes=["cc-screen"]):
+    with gr.Column(elem_classes=["cc-page"]):
 
-        gr.HTML(
-            '<div style="font-size:20px;font-weight:700;color:#1C1C1E;'
-            'padding:8px 0 16px">📷 Add Clothes</div>'
-        )
+        # Page header
+        gr.HTML("""
+<div style="padding: 40px 0 28px">
+  <h2 style="font-size:clamp(22px,2.5vw,32px);font-weight:800;color:#1A1A1A;
+      letter-spacing:-0.5px;margin:0 0 8px">Add to wardrobe</h2>
+  <p style="font-size:14px;color:#374151;margin:0">
+    Upload a photo of one clothing item. CloseCall will tag it automatically.</p>
+</div>
+""")
 
-        # ── Upload area ───────────────────────────────────────────────────────
-        with gr.Group(elem_classes=["cc-upload-zone"]):
-            gr.HTML(
-                '<div class="cc-upload-area">'
-                '  <span class="cc-upload-icon">📷</span>'
-                '  <div style="font-size:15px;font-weight:600;color:#1C1C1E;margin-bottom:4px">'
-                '    Upload Photos</div>'
-                '  <div style="font-size:13px;color:#6B7280">'
-                '    Take or select photos of your clothes</div>'
-                '</div>'
-            )
-            upload_image = gr.Image(
-                label="Clothing photo",
-                type="pil",
-                sources=["upload", "webcam"],
-                show_label=False,
-                height=220,
-            )
+        # ── Two-column layout on desktop, stacked on mobile ───────────────────
+        # We use a CSS grid trick via an HTML wrapper + inner Gradio columns.
+        # Left: upload. Right: result metadata.
 
-        label_input = gr.Textbox(
-            placeholder="Optional label (e.g. 'Favourite jacket')",
-            show_label=False,
-            max_lines=1,
-            elem_classes=["cc-input"],
-        )
+        with gr.Row(equal_height=False):
 
-        tag_btn = gr.Button(
-            "Tag & Add to Wardrobe",
-            elem_classes=["cc-btn-primary"],
-        )
+            # ── LEFT: upload panel ────────────────────────────────────────────
+            with gr.Column(scale=1, min_width=280):
 
-        # ── Progress steps ────────────────────────────────────────────────────
-        steps_html  = gr.HTML("")
-        result_html = gr.HTML("")
+                gr.HTML("""
+<div style="font-size:11px;font-weight:700;letter-spacing:1px;
+     text-transform:uppercase;color:#6B7280;margin-bottom:10px">
+  Upload a photo
+</div>
+""")
+                with gr.Group(elem_classes=["cc-upload-zone"]):
+                    upload_image = gr.Image(
+                        label="Clothing photo",
+                        type="pil",
+                        sources=["upload", "webcam"],
+                        show_label=False,
+                        height=280,
+                    )
 
-        # ── Post-upload actions ───────────────────────────────────────────────
-        with gr.Row(visible=False) as post_row:
-            add_another_btn = gr.Button(
-                "Add Another",
-                elem_classes=["cc-btn-secondary"],
-            )
-            edit_tags_btn = gr.Button(
-                "Edit Tags →",
-                elem_classes=["cc-btn-violet"],
-            )
+                label_input = gr.Textbox(
+                    placeholder="Optional label — e.g. 'Favourite jacket'",
+                    show_label=False,
+                    max_lines=1,
+                    elem_classes=["cc-input"],
+                )
+
+                analyze_btn = gr.Button(
+                    "Analyze item",
+                    elem_classes=["cc-btn-primary"],
+                )
+
+                steps_html = gr.HTML("")
+
+            # ── RIGHT: result panel ───────────────────────────────────────────
+            with gr.Column(scale=1, min_width=280):
+
+                gr.HTML("""
+<div style="font-size:11px;font-weight:700;letter-spacing:1px;
+     text-transform:uppercase;color:#6B7280;margin-bottom:10px">
+  Detected tags
+</div>
+""")
+
+                result_html = gr.HTML("""
+<div style="background:#FDFCFA;border:1.5px dashed #D1CCC4;border-radius:14px;
+     padding:40px 24px;text-align:center;color:#C8C3BB">
+  <div style="font-size:28px;margin-bottom:10px">◻</div>
+  <div style="font-size:14px">Upload a photo and click<br>Analyze item</div>
+</div>
+""")
+
+                with gr.Row(visible=False) as post_row:
+                    with gr.Column(scale=1):
+                        add_another_btn = gr.Button(
+                            "Add another",
+                            elem_classes=["cc-btn-secondary"],
+                        )
+                    with gr.Column(scale=1):
+                        edit_tags_btn = gr.Button(
+                            "Edit tags →",
+                            elem_classes=["cc-btn-accent"],
+                        )
+
+        gr.HTML('<div style="height:40px"></div>')
 
         # ── Wire ──────────────────────────────────────────────────────────────
-        tag_btn.click(
-            fn=lambda img, lbl: (
-                _steps_html("running"), "", "", gr.update(visible=False)
-            ),
+        analyze_btn.click(
+            fn=lambda img, lbl: (_steps_html("running"), """
+<div style="background:#FDFCFA;border:1.5px dashed #D1CCC4;border-radius:14px;
+     padding:40px 24px;text-align:center;color:#C8C3BB">
+  <div style="font-size:14px;color:#7C5CFC">Analyzing…</div>
+</div>
+""", "", gr.update(visible=False)),
             inputs=[upload_image, label_input],
             outputs=[steps_html, result_html, last_item_id, post_row],
         ).then(
@@ -247,8 +273,7 @@ def build_add_clothes_tab(go_edit_item_fn) -> gr.State:
 
         add_another_btn.click(
             fn=handle_reset,
-            outputs=[upload_image, label_input, steps_html, result_html,
-                     last_item_id, post_row],
+            outputs=[upload_image, label_input, steps_html, result_html, last_item_id, post_row],
         )
 
         edit_tags_btn.click(

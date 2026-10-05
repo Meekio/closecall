@@ -1,13 +1,24 @@
 """
-Screens 7–10 — Outfits Tab
-────────────────────────────
-Screen 7  — Outfit Request   : conversational input + agent thinking steps
-Screen 8  — Recommendations  : tabbed outfit cards (Outfit 1 / 2 / 3)
-Screen 9  — Outfit Detail    : expanded item breakdown per outfit
-Screen 10 — Feedback         : quick-pick chips + free-text refinement
+Outfits Tab — CloseCall
+────────────────────────
+Three sub-views managed by gr.Column(visible=...):
 
-The whole flow lives inside a single tab managed by a gr.State("view")
-that switches between sub-views via gr.update(visible=...) on each Column.
+  View A — Request input
+    • Natural-language text box
+    • Agent processing checklist (shows tool calls in progress)
+
+  View B — Recommendations
+    • Weather/occasion context bar
+    • Outfit cards — side-by-side on desktop (cc-outfit-grid CSS grid)
+    • Each card: item list, Why this works, Styling guidance, validation checks
+    • Failure diagnosis when no valid outfit found
+
+  View C — Feedback / Refinement
+    • Quick-change chips + free-text refinement
+    • Routes back through agent with session memory intact
+
+Backend untouched: get_agent(), reset_agent(), all tool calls happen inside
+agent.chat(). UI only parses and renders the response.
 """
 
 from __future__ import annotations
@@ -20,532 +31,562 @@ from src.tools.weather import get_weather
 from src.database.profile import load_profile
 
 
-# ─── agent thinking HTML ──────────────────────────────────────────────────────
+# ─── agent processing checklist ───────────────────────────────────────────────
 
 _AGENT_STEPS = [
-    ("Fetching weather for your location…",    ""),
-    ("Filtering your wardrobe",               ""),
-    ("Generating outfit combinations",        ""),
-    ("Validating for occasion and weather",   ""),
+    "Understanding your request",
+    "Checking today's weather",
+    "Searching your wardrobe",
+    "Finding suitable combinations",
+    "Checking outfit validity",
+    "Finding the best match",
 ]
 
 def _thinking_html(active: int = -1) -> str:
-    """active = index of currently running step (-1 = none yet, 99 = done)."""
+    """
+    active: index of the currently running step.
+    -1 = idle (show nothing), 99 = all done.
+    """
+    if active == -1:
+        return ""
+
     rows = ""
-    for i, (label, icon) in enumerate(_AGENT_STEPS):
-        if i < active:
-            color, check = "#22C55E", "✅"
+    for i, label in enumerate(_AGENT_STEPS):
+        if i < active or active == 99:
+            icon, color = "✓", "#16A34A"
         elif i == active:
-            color, check = "#8B5CF6", "⏳"
+            icon, color = "…", "#7C5CFC"
         else:
-            color, check = "#D1D5DB", "○"
+            icon, color = "○", "#D1D5DB"
+
         rows += (
-            f'<div class="cc-agent-step-item" style="color:{color}">'
-            f'  <span>{check}</span>'
-            f'  <span style="color:#374151;font-size:13px">{label}</span>'
+            f'<div style="display:flex;align-items:center;justify-content:space-between;'
+            f'padding:8px 0;border-bottom:1px solid #F0EDE8;font-size:14px;color:#374151">'
+            f'  <span>{label}</span>'
+            f'  <span style="color:{color};font-weight:700;font-size:16px">{icon}</span>'
             f'</div>'
         )
+
     return f'<div class="cc-agent-steps">{rows}</div>'
 
 
-# ─── outfit card HTML helpers ─────────────────────────────────────────────────
+# ─── response parser ───────────────────────────────────────────────────────────
 
-def _parse_outfits(agent_response: str) -> list[dict]:
+def _parse_outfits(text: str) -> list[dict]:
     """
-    Parse the agent response into outfit dicts.
-    Handles the format:
-        ### Outfit 1: Title
-        - **Item name** — item_id
-        *Why this works:* explanation
+    Parse agent Markdown response into outfit dicts:
+      { title, items: [{name, item_id}], why, guidance, raw }
     """
-    outfits: list[dict] = []
-
-    # Find every "### Outfit N: Title" heading and its position
-    heading_pattern = re.compile(
-        r"#{1,3}\s*Outfit\s+(\d+)\s*[:\-–]?\s*([^\n]*)",
-        re.IGNORECASE
+    heading_re = re.compile(
+        r"#{1,3}\s*Outfit\s+(\d+)\s*[:\-–]?\s*([^\n]*)", re.IGNORECASE
     )
-    headings = list(heading_pattern.finditer(agent_response))
+    headings = list(heading_re.finditer(text))
 
     if not headings:
-        # No structured headings — return raw
-        return [{"title": "Recommendation", "items": [], "why": "", "raw": agent_response.strip()}]
+        return [{"title": "Recommendation", "items": [], "why": "",
+                 "guidance": "", "raw": text.strip()}]
 
+    outfits = []
     for i, match in enumerate(headings):
         title = match.group(2).strip().strip("*").strip()
-        # Block is from end of this heading to start of next (or end of string)
         start = match.end()
-        end = headings[i + 1].start() if i + 1 < len(headings) else len(agent_response)
-        block = agent_response[start:end]
+        end   = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        block = text[start:end]
 
-        # Extract items: - **Name** — item_id
-        item_pattern = re.compile(r"-\s+\*{0,2}(.+?)\*{0,2}\s*[—–-]+\s*(item_\S+)", re.MULTILINE)
+        # Items: - **Name** — item_id
+        item_re = re.compile(r"-\s+\*{0,2}(.+?)\*{0,2}\s*[—–\-]+\s*(item_\S+)", re.MULTILINE)
         items = [
             {"name": m.group(1).strip(), "item_id": m.group(2).strip().rstrip(".,)")}
-            for m in item_pattern.finditer(block)
+            for m in item_re.finditer(block)
         ]
 
-        # Extract why: *Why this works:* text
-        why_pattern = re.compile(r"\*?Why(?:\s+this\s+works)?\*?[:\s]+(.+?)(?:\n\n|\Z)", re.IGNORECASE | re.DOTALL)
-        why_match = why_pattern.search(block)
-        why = why_match.group(1).strip().strip("*") if why_match else ""
+        # Why this works
+        why_re = re.compile(
+            r"\*?Why(?:\s+this\s+works)?\*?[:\s]+(.+?)(?:\n\n|\*?Styling|\Z)",
+            re.IGNORECASE | re.DOTALL
+        )
+        why_m  = why_re.search(block)
+        why    = why_m.group(1).strip().strip("*") if why_m else ""
 
-        outfits.append({"title": title, "items": items, "why": why, "raw": block.strip()})
+        # Styling guidance
+        guide_re = re.compile(
+            r"\*?Styling\s+guidance\*?[:\s]+(.+?)(?:\n\n|\Z)",
+            re.IGNORECASE | re.DOTALL
+        )
+        guide_m  = guide_re.search(block)
+        guidance = guide_m.group(1).strip().strip("*") if guide_m else ""
+
+        outfits.append({
+            "title":    title,
+            "items":    items,
+            "why":      why,
+            "guidance": guidance,
+            "raw":      block.strip(),
+        })
 
     return outfits[:3]
 
 
-def _outfit_card_html(outfit: dict, idx: int, is_raining: bool = False) -> str:
-    badge = '<span class="cc-badge">🌧️ Rain Ready</span>' if is_raining else ""
+def _is_failure_response(text: str) -> bool:
+    """Detect if the agent returned a failure/no-outfit-found response."""
+    lower = text.lower()
+    signals = [
+        "couldn't find", "could not find", "no valid outfit",
+        "no suitable outfit", "no outfit", "couldn't complete",
+        "nothing suitable", "wardrobe doesn't have",
+    ]
+    return any(s in lower for s in signals) and "outfit 1" not in lower
 
-    # Items list
+
+# ─── outfit card HTML ──────────────────────────────────────────────────────────
+
+def _outfit_card_html(outfit: dict, idx: int, is_best: bool = False,
+                      is_raining: bool = False) -> str:
+    best_badge  = '<span class="cc-badge-violet" style="margin-bottom:10px;display:inline-block">BEST MATCH</span>' if is_best else ""
+    rain_badge  = '<span class="cc-badge-rain" style="margin-left:6px">🌧 Rain suitable</span>' if is_raining else ""
+
+    # Items
     items_html = ""
     for item in outfit.get("items", []):
         items_html += (
-            f'<div class="cc-outfit-item-row">'
-            f'  <span style="color:#1C1C1E;font-size:14px;font-weight:500">{item["name"]}</span>'
-            f'  <span style="color:#9CA3AF;font-size:11px;font-family:monospace">{item["item_id"]}</span>'
+            f'<div style="display:flex;align-items:center;justify-content:space-between;'
+            f'padding:9px 0;border-bottom:1px solid #F8F7F5;font-size:14px">'
+            f'  <span style="color:#1A1A1A;font-weight:500">{item["name"]}</span>'
+            f'  <span style="color:#C8C3BB;font-size:11px;font-family:monospace">'
+            f'    {item["item_id"]}</span>'
             f'</div>'
         )
 
-    # Why section — only render if there is actual text
+    # Why this works
     why = (outfit.get("why") or "").strip()
+    why_html = ""
     if why:
-        lines = why.split("\n")
-        bullet_items = [l.lstrip("-•* ").strip() for l in lines if re.match(r"^\s*[-•*]", l)]
-        prose_lines  = [l.strip() for l in lines if l.strip() and not re.match(r"^\s*[-•*]", l)]
-        bullets_html = ""
-        if bullet_items:
-            bullets_html = "<ul style='margin:6px 0 0 0;padding-left:18px;color:#166534'>" + \
-                           "".join(f"<li style='margin-bottom:3px'>{b}</li>" for b in bullet_items) + \
-                           "</ul>"
-        prose_html = "".join(f"<p style='margin:0 0 4px;color:#166534'>{p}</p>" for p in prose_lines)
+        why_clean = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", why)
+        why_clean = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", why_clean)
+        why_clean = why_clean.replace("\n", " ")
         why_html = (
-            f'<div class="cc-outfit-why">'
-            f'  <div style="font-weight:600;margin-bottom:6px;color:#166534">✅ Why this outfit?</div>'
-            f'  {prose_html}{bullets_html}'
+            f'<div class="cc-why-box">'
+            f'  <div style="font-size:11px;font-weight:700;letter-spacing:1px;'
+            f'text-transform:uppercase;color:#15803D;margin-bottom:6px">Why this works</div>'
+            f'  <div style="font-size:13px;color:#1A5C2E;line-height:1.6">{why_clean}</div>'
             f'</div>'
         )
-    else:
-        why_html = ""
 
-    # Raw fallback — only when no structured items AND no why
+    # Styling guidance (RAG)
+    guidance = (outfit.get("guidance") or "").strip()
+    guide_html = ""
+    if guidance:
+        guide_clean = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", guidance)
+        guide_clean = guide_clean.replace("\n", " ")
+        guide_html = (
+            f'<div style="margin-top:10px;padding:12px 14px;background:#F5F3FF;'
+            f'border-radius:10px">'
+            f'  <div style="font-size:11px;font-weight:700;letter-spacing:1px;'
+            f'text-transform:uppercase;color:#5B3FD4;margin-bottom:5px">'
+            f'▸ Styling guidance</div>'
+            f'  <div style="font-size:13px;color:#4C3BA0;line-height:1.5">{guide_clean}</div>'
+            f'</div>'
+        )
+
+    # Raw fallback
     raw_html = ""
     if not outfit.get("items") and not why:
         raw = outfit.get("raw", "")
-        # Render raw markdown-ish text cleanly
-        raw_clean = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", raw)
-        raw_clean = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", raw_clean)
-        raw_clean = raw_clean.replace("\n", "<br>")
-        raw_html = f'<div style="font-size:14px;color:#374151;line-height:1.7">{raw_clean}</div>'
+        raw_c = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", raw)
+        raw_c = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", raw_c)
+        raw_c = raw_c.replace("\n", "<br>")
+        raw_html = f'<div style="font-size:14px;color:#374151;line-height:1.7">{raw_c}</div>'
+
+    border_style = "border-color:#7C5CFC;box-shadow:0 4px 20px rgba(124,92,252,0.15)" if is_best else ""
 
     return f"""
-<div style="background:#FFFFFF;border-radius:16px;padding:16px;
-     box-shadow:0 2px 10px rgba(0,0,0,0.07);border:1px solid #F3F4F6;margin-bottom:8px">
-  {badge}
-  <div style="font-size:16px;font-weight:700;color:#1C1C1E;margin-bottom:12px">
-    Outfit {idx+1}: {outfit['title']}
+<div class="cc-outfit-card" style="{border_style}">
+  <div style="padding:20px">
+    {best_badge}
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <span style="font-size:16px;font-weight:700;color:#1A1A1A">
+        Outfit {idx + 1}: {outfit['title']}</span>
+      {rain_badge}
+    </div>
+    {items_html}
+    {raw_html}
+    {why_html}
+    {guide_html}
   </div>
-  {items_html}
-  {raw_html}
-  {why_html}
 </div>
 """
 
 
-def _all_outfits_html(outfits: list[dict], is_raining: bool = False) -> str:
-    if not outfits:
-        return '<div style="padding:20px;text-align:center;color:#6B7280">No outfits generated yet.</div>'
-    return "".join(_outfit_card_html(o, i, is_raining) for i, o in enumerate(outfits))
+def _failure_html(agent_response: str) -> str:
+    """Render a failure/diagnosis response in the spec's failure card style."""
+    clean = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", agent_response)
+    clean = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", clean)
+    clean = clean.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    return f"""
+<div style="background:#FFFFFF;border-radius:16px;border:1px solid #E8E5E0;
+     box-shadow:0 2px 8px rgba(0,0,0,0.05);padding:24px">
+  <div style="font-size:11px;font-weight:700;letter-spacing:1px;
+       text-transform:uppercase;color:#D97706;margin-bottom:12px">
+    We couldn't find a perfect match
+  </div>
+  <div class="cc-fail-box">
+    <div style="font-size:14px;color:#1A1A1A;line-height:1.7">
+      <p>{clean}</p>
+    </div>
+  </div>
+</div>
+"""
 
 
-# ─── feedback chip definitions ────────────────────────────────────────────────
+# ─── feedback chips ────────────────────────────────────────────────────────────
 
 _FEEDBACK_CHIPS = [
-    ("More formal",      "Make the outfit more formal."),
-    ("More casual",      "Make the outfit more casual."),
-    ("Different color",  "Suggest a different color combination."),
-    ("No blazer",        "I don't want to wear a blazer."),
-    ("Different footwear","Suggest different footwear."),
-    ("Show more options","Show me more outfit options."),
+    ("More formal",         "Make the outfit more formal."),
+    ("More casual",         "Make it more casual and relaxed."),
+    ("Different colour",    "Suggest a different colour combination."),
+    ("No blazer",           "I don't want to wear a blazer."),
+    ("Different footwear",  "Suggest different footwear."),
+    ("Show more options",   "Show me more outfit options."),
 ]
 
 
-# ─── main tab builder ─────────────────────────────────────────────────────────
+# ─── tab builder ──────────────────────────────────────────────────────────────
 
 def build_outfits_tab(prefill_state: gr.State) -> None:
     """
-    Build the full Outfits tab (screens 7–10).
+    Build the full Outfits tab.
 
-    Parameters
-    ----------
-    prefill_state : gr.State
-        Shared state written by the Home tab when the user submits a request there.
-        When this tab becomes active it reads from that state to pre-fill the input.
+    prefill_state : gr.State written by the Home tab with the user's request.
     """
 
-    # ── Shared state ──────────────────────────────────────────────────────────
-    outfits_state  = gr.State([])      # list of parsed outfit dicts
+    # Shared state
+    outfits_state  = gr.State([])
     is_raining_st  = gr.State(False)
-    history_state  = gr.State([])      # chatbot history list[list[str]]
+    history_state  = gr.State([])
 
-    with gr.Column(elem_classes=["cc-screen"]):
+    with gr.Column(elem_classes=["cc-page"]):
 
-        # ═══════════════════════════════════════════════════════════════════
-        # VIEW A — Request input (Screen 7)
-        # ═══════════════════════════════════════════════════════════════════
+        # ══════════════════════════════════════════════════════════════════
+        # VIEW A — Request
+        # ══════════════════════════════════════════════════════════════════
         with gr.Column(visible=True) as view_request:
 
-            gr.HTML(
-                '<div style="font-size:20px;font-weight:700;color:#1C1C1E;'
-                'padding:8px 0 4px">New Outfit</div>'
-            )
-
-            # Chat history (shows user bubble + "Got it!" agent ack)
-            chatbot = gr.Chatbot(
-                label="",
-                show_label=False,
-                height=180,
-                render_markdown=True,
-                visible=False,
-            )
-
-            thinking_html = gr.HTML("")
+            gr.HTML("""
+<div style="padding: 40px 0 24px">
+  <h2 style="font-size:clamp(22px,2.5vw,32px);font-weight:800;color:#1A1A1A;
+      letter-spacing:-0.5px;margin:0 0 8px">New outfit</h2>
+  <p style="font-size:14px;color:#374151;margin:0">
+    Describe what you need and CloseCall will check your wardrobe.</p>
+</div>
+""")
 
             request_input = gr.Textbox(
-                placeholder="I need a semi-formal office outfit for today. It's raining and around 24°C.",
+                placeholder="I need a semi-formal office outfit for today. It's raining and I want something comfortable.",
                 show_label=False,
-                lines=2,
-                max_lines=4,
+                lines=3,
+                max_lines=6,
                 elem_classes=["cc-input"],
             )
 
             with gr.Row():
-                reset_btn = gr.Button("↺", size="sm", elem_classes=["cc-chip"])
-                send_btn  = gr.Button("→  Get Outfits", elem_classes=["cc-btn-primary"])
+                with gr.Column(scale=1, min_width=100):
+                    reset_btn = gr.Button("↺ Reset", elem_classes=["cc-btn-ghost"])
+                with gr.Column(scale=3):
+                    send_btn = gr.Button("Get outfits →", elem_classes=["cc-btn-primary"])
 
-            error_html = gr.HTML("")
+            thinking_html = gr.HTML("")
+            error_html    = gr.HTML("")
 
-        # ═══════════════════════════════════════════════════════════════════
-        # VIEW B — Recommendations (Screen 8)
-        # ═══════════════════════════════════════════════════════════════════
+        # ══════════════════════════════════════════════════════════════════
+        # VIEW B — Recommendations
+        # ══════════════════════════════════════════════════════════════════
         with gr.Column(visible=False) as view_results:
 
             with gr.Row():
-                back_btn_results = gr.Button("← Back", size="sm", elem_classes=["cc-chip"])
-                gr.HTML(
-                    '<div style="font-size:18px;font-weight:700;color:#1C1C1E;'
-                    'padding:8px 0;flex:1;text-align:center">'
-                    'Your Outfits</div>'
-                )
+                back_btn = gr.Button("← Back", elem_classes=["cc-btn-ghost"])
+                gr.HTML("""
+<div style="flex:1;padding:40px 0 24px;padding-left:16px">
+  <h2 style="font-size:clamp(20px,2.5vw,28px);font-weight:800;color:#1A1A1A;
+      letter-spacing:-0.5px;margin:0">Your outfits</h2>
+</div>
+""")
 
-            results_context_html = gr.HTML("")   # e.g. "Semi-formal · Office · Rainy · 24°C"
+            context_html = gr.HTML("")
 
-            # Tab selector for Outfit 1 / 2 / 3
-            outfit_selector = gr.Radio(
-                choices=["Outfit 1", "Outfit 2", "Outfit 3"],
-                value="Outfit 1",
-                show_label=False,
-            )
-            outfit_display_html = gr.HTML("")
+            # Outfit cards — cc-outfit-grid gives side-by-side on desktop
+            gr.HTML('<div class="cc-outfit-grid" id="outfit-grid-start"></div>')
+            outfit_cards_html = gr.HTML("")
 
+            gr.HTML('<div style="height:24px"></div>')
             with gr.Row():
-                try_another_btn = gr.Button("Try Another", elem_classes=["cc-btn-secondary"])
-                looks_good_btn  = gr.Button("Looks Good! 👍", elem_classes=["cc-btn-violet"])
+                with gr.Column(scale=1):
+                    try_another_btn = gr.Button("Try another", elem_classes=["cc-btn-secondary"])
+                with gr.Column(scale=1):
+                    looks_good_btn  = gr.Button("Looks good ✓", elem_classes=["cc-btn-accent"])
 
-        # ═══════════════════════════════════════════════════════════════════
-        # VIEW C — Feedback / Refinement (Screen 10)
-        # ═══════════════════════════════════════════════════════════════════
+        # ══════════════════════════════════════════════════════════════════
+        # VIEW C — Feedback / Refinement
+        # ══════════════════════════════════════════════════════════════════
         with gr.Column(visible=False) as view_feedback:
 
             with gr.Row():
-                back_btn_feedback = gr.Button("← Back", size="sm", elem_classes=["cc-chip"])
-                gr.HTML(
-                    '<div style="font-size:18px;font-weight:700;color:#1C1C1E;'
-                    'padding:8px 0;flex:1">Not quite right? 🤔</div>'
-                )
+                back_fb_btn = gr.Button("← Back", elem_classes=["cc-btn-ghost"])
+                gr.HTML("""
+<div style="flex:1;padding:40px 0 24px;padding-left:16px">
+  <h2 style="font-size:clamp(20px,2.5vw,26px);font-weight:800;color:#1A1A1A;
+      letter-spacing:-0.5px;margin:0">How does this look?</h2>
+</div>
+""")
 
-            gr.HTML(
-                '<div style="font-size:14px;color:#6B7280;margin-bottom:12px">'
-                'Tell me what you\'d like to change</div>'
-            )
+            gr.HTML("""
+<div style="font-size:14px;color:#374151;margin-bottom:18px">
+  What should I change?
+</div>
+""")
 
-            # Quick feedback chips
-            with gr.Column():
-                feedback_chip_btns = [
-                    gr.Button(label, elem_classes=["cc-feedback-chip"])
-                    for label, _ in _FEEDBACK_CHIPS
-                ]
+            # Quick-change chips in a 2-col responsive grid
+            gr.HTML('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:20px" id="feedback-chips">')
+            feedback_btns = [
+                gr.Button(label, elem_classes=["cc-feedback-btn"])
+                for label, _ in _FEEDBACK_CHIPS
+            ]
+            gr.HTML('</div>')
 
-            gr.HTML(
-                '<div style="text-align:center;color:#D1D5DB;font-size:13px;'
-                'margin:12px 0">— or —</div>'
-            )
-
+            gr.HTML("""
+<div style="text-align:center;color:#D1CCC4;font-size:13px;margin:16px 0">— or —</div>
+<div style="font-size:11px;font-weight:700;letter-spacing:1px;
+     text-transform:uppercase;color:#6B7280;margin-bottom:8px">
+  What should I change?
+</div>
+""")
             refinement_input = gr.Textbox(
-                placeholder="Describe what you want...",
+                placeholder="e.g. Something without jeans, or more colourful…",
                 show_label=False,
                 lines=2,
-                max_lines=4,
+                max_lines=5,
                 elem_classes=["cc-input"],
             )
-            refine_btn = gr.Button("→  Refine", elem_classes=["cc-btn-primary"])
+            refine_btn = gr.Button("Update outfit →", elem_classes=["cc-btn-primary"])
+            refine_thinking = gr.HTML("")
 
-        # ═══════════════════════════════════════════════════════════════════
-        # EVENT HANDLERS
-        # ═══════════════════════════════════════════════════════════════════
+        # ══════════════════════════════════════════════════════════════════
+        # HELPERS
+        # ══════════════════════════════════════════════════════════════════
 
-        # ── helpers ───────────────────────────────────────────────────────────
-
-        def _is_wardrobe_empty():
+        def _empty_wardrobe():
             return len(get_all_items()) == 0
 
-        def _get_weather_flag():
+        def _weather_context():
             profile = load_profile()
-            w = get_weather(profile.get("location","Mumbai"))
+            w = get_weather(profile.get("location", "Mumbai"))
             return w.get("is_raining", False), w
 
-        # ── send request (screen 7 → 8) ────────────────────────────────────
-
-        _SEND_OUTPUTS = [
+        # Outputs shared by send & refine flows
+        _SEND_OUTS = [
             view_request, view_results, view_feedback,
-            history_state, thinking_html, chatbot, error_html,
-            outfits_state, is_raining_st, results_context_html,
-            outfit_display_html,
+            history_state, thinking_html, error_html,
+            outfits_state, is_raining_st,
+            context_html, outfit_cards_html,
         ]
 
+        # ── send: immediate feedback ──────────────────────────────────────
         def on_send_start(request, history):
-            """Immediately show thinking state."""
             if not request.strip():
                 return (
-                    gr.update(visible=True),   # view_request
-                    gr.update(visible=False),  # view_results
-                    gr.update(visible=False),  # view_feedback
-                    history,
-                    _thinking_html(0),
-                    gr.update(visible=True),   # chatbot
-                    gr.update(value=""),       # error_html
-                    [],                        # outfits_state
-                    False,                     # is_raining
-                    "",                        # results_context_html
-                    "",                        # outfit_display_html
+                    gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                    history, "", gr.update(value=""),
+                    [], False, "", "",
                 )
-            user_bubble = [[request, "Got it! I'll check the weather, look at your wardrobe and put together some options…"]]
-            new_hist = history + user_bubble
             return (
-                gr.update(visible=True),
-                gr.update(visible=False),
-                gr.update(visible=False),
-                new_hist,
-                _thinking_html(1),
-                gr.update(visible=True),
-                gr.update(value=""),
-                [],
-                False,
-                "",
-                "",   # outfit_display_html
+                gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                history, _thinking_html(0), gr.update(value=""),
+                [], False, "", "",
             )
 
+        # ── send: run agent ───────────────────────────────────────────────
         def on_send_execute(request, history):
-            """Run the agent and parse results."""
             if not request.strip():
                 return (
                     gr.update(), gr.update(), gr.update(),
-                    history, "", gr.update(), gr.update(value=""),
+                    history, "", gr.update(value=""),
                     [], False, "", "",
                 )
 
-            if _is_wardrobe_empty():
+            if _empty_wardrobe():
                 err = (
-                    '<div style="color:#EF4444;padding:8px;font-size:14px">'
-                    '⚠️ Your wardrobe is empty. Please add clothes first.</div>'
+                    '<div class="cc-error-box">'
+                    '<strong>Wardrobe is empty.</strong> '
+                    'Please add clothes first from the Wardrobe tab.</div>'
                 )
                 return (
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-                    history, "", gr.update(), gr.update(value=err),
+                    history, "", gr.update(value=err),
                     [], False, "", "",
                 )
 
-            is_raining, w = _get_weather_flag()
+            is_raining, w = _weather_context()
             agent = get_agent()
 
             try:
                 response = agent.chat(request)
             except Exception as exc:
-                err = f'<div style="color:#EF4444;font-size:13px;padding:8px">Error: {exc}</div>'
+                err = f'<div class="cc-error-box"><strong>Error:</strong> {exc}</div>'
                 return (
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-                    history, "", gr.update(), gr.update(value=err),
+                    history, "", gr.update(value=err),
                     [], False, "", "",
                 )
 
-            outfits = _parse_outfits(response)
             new_hist = history + [[request, response]]
 
+            # Context bar
             temp = w.get("temperature_c", "")
-            cond = w.get("condition", "")
-            ctx_html = (
-                f'<div style="font-size:12px;color:#6B7280;text-align:center;'
-                f'margin-bottom:12px">{cond} · {temp}°C</div>'
+            cond = w.get("condition", "").title()
+            rain_txt = " · 🌧 Rainy" if is_raining else ""
+            ctx = (
+                f'<div style="font-size:12px;color:#6B7280;letter-spacing:0.3px;'
+                f'margin-bottom:20px">{cond} · {temp}°C{rain_txt}</div>'
             )
 
-            first_html = _outfit_card_html(outfits[0], 0, is_raining) if outfits else ""
+            # Failure path
+            if _is_failure_response(response):
+                cards_html = _failure_html(response)
+                return (
+                    gr.update(visible=False), gr.update(visible=True), gr.update(visible=False),
+                    new_hist, _thinking_html(99), gr.update(value=""),
+                    [], is_raining, ctx, cards_html,
+                )
+
+            outfits = _parse_outfits(response)
+            cards_html = (
+                '<div class="cc-outfit-grid">'
+                + "".join(
+                    _outfit_card_html(o, i, is_best=(i == 0), is_raining=is_raining)
+                    for i, o in enumerate(outfits)
+                )
+                + '</div>'
+            )
 
             return (
-                gr.update(visible=False),
-                gr.update(visible=True),
-                gr.update(visible=False),
-                new_hist,
-                _thinking_html(99),
-                gr.update(visible=True),
-                gr.update(value=""),
-                outfits,
-                is_raining,
-                ctx_html,
-                first_html,   # outfit_display_html — populated here
+                gr.update(visible=False), gr.update(visible=True), gr.update(visible=False),
+                new_hist, _thinking_html(99), gr.update(value=""),
+                outfits, is_raining, ctx, cards_html,
             )
 
         send_btn.click(
             fn=on_send_start,
             inputs=[request_input, history_state],
-            outputs=_SEND_OUTPUTS,
+            outputs=_SEND_OUTS,
         ).then(
             fn=on_send_execute,
             inputs=[request_input, history_state],
-            outputs=_SEND_OUTPUTS,
+            outputs=_SEND_OUTS,
         )
 
-        # Enter key also submits
         request_input.submit(
             fn=on_send_start,
             inputs=[request_input, history_state],
-            outputs=_SEND_OUTPUTS,
+            outputs=_SEND_OUTS,
         ).then(
             fn=on_send_execute,
             inputs=[request_input, history_state],
-            outputs=_SEND_OUTPUTS,
+            outputs=_SEND_OUTS,
         )
 
-        # ── outfit tab selector ───────────────────────────────────────────────
+        # ── back / navigation ─────────────────────────────────────────────
+        def _show(req=False, res=False, fb=False):
+            return gr.update(visible=req), gr.update(visible=res), gr.update(visible=fb)
 
-        def on_outfit_select(choice, outfits, is_raining):
-            idx = int(choice.split()[-1]) - 1
-            if idx < len(outfits):
-                return _outfit_card_html(outfits[idx], idx, is_raining)
-            return ""
-
-        outfit_selector.change(
-            fn=on_outfit_select,
-            inputs=[outfit_selector, outfits_state, is_raining_st],
-            outputs=[outfit_display_html],
-        )
-
-        # Populate display when results arrive
-        def _show_first_outfit(outfits, is_raining):
-            if outfits:
-                return _outfit_card_html(outfits[0], 0, is_raining)
-            return ""
-
-        # Trigger display update when outfits_state changes (via .then chain above)
-        # We hook into looks_good_btn / try_another for now; results_context triggers
-        # the HTML directly inside on_send_execute above.
-
-        # ── back navigation ───────────────────────────────────────────────────
-
-        back_btn_results.click(
-            fn=lambda: (gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)),
+        back_btn.click(
+            fn=lambda: _show(req=True),
             outputs=[view_request, view_results, view_feedback],
         )
-        back_btn_feedback.click(
-            fn=lambda: (gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)),
+        back_fb_btn.click(
+            fn=lambda: _show(res=True),
             outputs=[view_request, view_results, view_feedback],
         )
-
-        # ── "Try Another" → feedback ──────────────────────────────────────────
-
         try_another_btn.click(
-            fn=lambda: (gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)),
+            fn=lambda: _show(fb=True),
             outputs=[view_request, view_results, view_feedback],
         )
-
-        # ── "Looks Good!" → back to request (reset) ───────────────────────────
-
         looks_good_btn.click(
-            fn=lambda: (gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)),
+            fn=lambda: _show(req=True),
             outputs=[view_request, view_results, view_feedback],
         )
 
-        # ── feedback chip → refine ─────────────────────────────────────────────
+        # ── refinement ────────────────────────────────────────────────────
+        _REFINE_OUTS = [
+            view_request, view_results, view_feedback,
+            history_state, outfits_state, is_raining_st,
+            context_html, outfit_cards_html, refine_thinking,
+        ]
 
-        def _do_refinement(refinement_text, history, outfits, is_raining):
-            if not refinement_text.strip():
+        def do_refinement(text, history, outfits, is_raining):
+            if not text.strip():
                 return (
-                    gr.update(visible=False), gr.update(visible=True), gr.update(visible=False),
-                    history, outfits, is_raining, "",
+                    gr.update(), gr.update(visible=True), gr.update(),
+                    history, outfits, is_raining, "", "", "",
                 )
-            
-            # Capture refinement as long-term preference memory
-            from src.database.preferences import add_preference_note
-            add_preference_note("default_user", refinement_text)
-            
+
+            # Persist as long-term preference
+            try:
+                from src.database.preferences import add_preference_note
+                add_preference_note("default_user", text)
+            except Exception:
+                pass
+
             agent = get_agent()
             try:
-                response = agent.chat(refinement_text)
+                response = agent.chat(text)
             except Exception as exc:
                 response = f"Error: {exc}"
 
+            new_hist   = history + [[text, response]]
             new_outfits = _parse_outfits(response)
-            new_hist    = history + [[refinement_text, response]]
-            first_html  = _outfit_card_html(new_outfits[0], 0, is_raining) if new_outfits else ""
+
+            if _is_failure_response(response):
+                cards_html = _failure_html(response)
+            else:
+                cards_html = (
+                    '<div class="cc-outfit-grid">'
+                    + "".join(
+                        _outfit_card_html(o, i, is_best=(i == 0), is_raining=is_raining)
+                        for i, o in enumerate(new_outfits)
+                    )
+                    + '</div>'
+                )
 
             return (
-                gr.update(visible=False),   # hide request
-                gr.update(visible=True),    # show results
-                gr.update(visible=False),   # hide feedback
-                new_hist,
-                new_outfits,
-                is_raining,
-                first_html,
+                gr.update(visible=False), gr.update(visible=True), gr.update(visible=False),
+                new_hist, new_outfits, is_raining, "", cards_html, "",
             )
-
-        _REFINE_OUTPUTS = [
-            view_request, view_results, view_feedback,
-            history_state, outfits_state, is_raining_st, outfit_display_html,
-        ]
 
         refine_btn.click(
-            fn=_do_refinement,
+            fn=do_refinement,
             inputs=[refinement_input, history_state, outfits_state, is_raining_st],
-            outputs=_REFINE_OUTPUTS,
+            outputs=_REFINE_OUTS,
         )
         refinement_input.submit(
-            fn=_do_refinement,
+            fn=do_refinement,
             inputs=[refinement_input, history_state, outfits_state, is_raining_st],
-            outputs=_REFINE_OUTPUTS,
+            outputs=_REFINE_OUTS,
         )
 
-        # Wire quick feedback chips
-        for btn, (label, prompt_text) in zip(feedback_chip_btns, _FEEDBACK_CHIPS):
+        # Wire quick-change chips
+        for btn, (_, prompt_text) in zip(feedback_btns, _FEEDBACK_CHIPS):
             btn.click(
-                fn=lambda h, o, r, pt=prompt_text: _do_refinement(pt, h, o, r),
+                fn=lambda h, o, r, pt=prompt_text: do_refinement(pt, h, o, r),
                 inputs=[history_state, outfits_state, is_raining_st],
-                outputs=_REFINE_OUTPUTS,
+                outputs=_REFINE_OUTS,
             )
 
-        # ── reset session ─────────────────────────────────────────────────────
-
+        # ── reset ─────────────────────────────────────────────────────────
         def on_reset():
             reset_agent()
             return (
                 gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-                [], _thinking_html(-1), gr.update(value=[], visible=False),
-                gr.update(value=""), [], False, "", "",
+                [], _thinking_html(-1), gr.update(value=""),
+                [], False, "", "",
             )
 
-        reset_btn.click(
-            fn=on_reset,
-            outputs=_SEND_OUTPUTS,
-        )
-
-        # ── pre-fill from Home tab ─────────────────────────────────────────────
-        # Called externally via prefill_state change trigger set up in app.py
+        reset_btn.click(fn=on_reset, outputs=_SEND_OUTS)

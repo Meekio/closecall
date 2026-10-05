@@ -1,14 +1,14 @@
 """
-Screen 6 — My Wardrobe
-───────────────────────
-• Search bar
-• Filter chips: All / Tops / Bottoms / One-pieces / Footwear / Outerwear
-• 3-column image grid with item cards (image + name + status badge)
-• Tap a card → pre-load Item Detail tab
+Wardrobe Tab — CloseCall
+─────────────────────────
+Desktop: 4-column responsive grid, search bar, category filter chips.
+Tablet : 3 columns.
+Mobile : 2 columns.
+Each card shows the clothing image, name, formality label, clean/dirty badge.
 """
 
 from __future__ import annotations
-import os
+import base64
 from pathlib import Path
 import gradio as gr
 
@@ -23,129 +23,175 @@ _CATEGORY_MAP = {
     "Footwear": "footwear",
     "Outerwear": "outerwear",
 }
-_FORMALITY_LABELS = {1:"Loungewear",2:"Casual",3:"Smart Casual",4:"Business Casual",5:"Formal"}
+_FORMALITY_LABELS = {
+    1: "Loungewear",
+    2: "Casual",
+    3: "Smart casual",
+    4: "Business casual",
+    5: "Formal",
+}
 
 
-# ─── HTML grid builder ────────────────────────────────────────────────────────
+# ─── HTML helpers ──────────────────────────────────────────────────────────────
 
-def _item_card_html(item: dict) -> str:
-    name = item.get("label") or f"{item.get('color','').title()} {item.get('subtype','').replace('_',' ').title()}"
-    status = item.get("status","clean")
-    badge_color = "#22C55E" if status == "clean" else "#EF4444"
-    badge_bg    = "#DCFCE7" if status == "clean" else "#FEE2E2"
-    formality   = _FORMALITY_LABELS.get(item.get("formality",2),"")
-
-    img_path = item.get("image_path","")
+def _img_src(item: dict) -> str:
+    img_path = item.get("image_path", "")
     if img_path and Path(img_path).exists():
-        # Use a data URI so Gradio HTML component can render it
-        import base64
         try:
             data = Path(img_path).read_bytes()
             b64  = base64.b64encode(data).decode()
             ext  = Path(img_path).suffix.lower().lstrip(".")
-            mime = {"jpg":"jpeg","jpeg":"jpeg","png":"png","webp":"webp"}.get(ext,"jpeg")
-            img_src = f"data:image/{mime};base64,{b64}"
+            mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp"}.get(ext, "jpeg")
+            return f"data:image/{mime};base64,{b64}"
         except Exception:
-            img_src = ""
-    else:
-        img_src = ""
+            pass
+    return ""
+
+
+def _item_card_html(item: dict) -> str:
+    name = (
+        item.get("label")
+        or f"{item.get('color', '').title()} {item.get('subtype', '').replace('_', ' ').title()}"
+    ).strip()
+    status      = item.get("status", "clean")
+    formality   = _FORMALITY_LABELS.get(item.get("formality", 2), "")
+    src         = _img_src(item)
 
     img_html = (
-        f'<img src="{img_src}" style="width:100%;height:100%;object-fit:cover;'
-        f'border-radius:10px" />'
-        if img_src else
-        '<div style="width:100%;height:100%;background:#F3F4F6;border-radius:10px;'
-        'display:flex;align-items:center;justify-content:center;font-size:14px;color:#9CA3AF;font-weight:600">•</div>'
+        f'<img src="{src}" alt="{name}" '
+        f'style="width:100%;height:100%;object-fit:cover;display:block" />'
+        if src else
+        f'<div style="width:100%;height:100%;background:#F0EDE8;'
+        f'display:flex;align-items:center;justify-content:center;'
+        f'font-size:28px;color:#C8C3BB">◻</div>'
+    )
+
+    badge = (
+        '<span class="cc-badge-clean">● Clean</span>'
+        if status == "clean" else
+        '<span class="cc-badge-dirty">● Dirty</span>'
     )
 
     return f"""
-<div style="border-radius:12px;background:#fff;overflow:hidden;
-     box-shadow:0 1px 4px rgba(0,0,0,0.08);border:1px solid #F3F4F6">
-  <div style="aspect-ratio:1;overflow:hidden;background:#F9FAFB">
+<div class="cc-item-card">
+  <div style="aspect-ratio:1;overflow:hidden;background:#F8F6F3">
     {img_html}
   </div>
-  <div style="padding:8px">
-    <div style="font-size:12px;font-weight:600;color:#1C1C1E;
-         white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{name}</div>
-    <div style="font-size:10px;color:#6B7280;margin:2px 0">{formality}</div>
-    <span style="display:inline-block;background:{badge_bg};color:{badge_color};
-          border-radius:20px;padding:2px 8px;font-size:10px;font-weight:600">
-      {status.title()}
-    </span>
+  <div style="padding:10px 12px 12px">
+    <div style="font-size:13px;font-weight:600;color:#1A1A1A;
+         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+         margin-bottom:3px">{name}</div>
+    <div style="font-size:11px;color:#6B7280;margin-bottom:6px">{formality}</div>
+    {badge}
   </div>
 </div>
 """
 
 
+def _section_header_html(label: str, count: int) -> str:
+    return (
+        f'<div style="font-size:11px;font-weight:700;letter-spacing:1px;'
+        f'text-transform:uppercase;color:#6B7280;margin:28px 0 12px">'
+        f'{label.upper()} · {count}</div>'
+    )
+
+
 def _grid_html(items: list[dict]) -> str:
     if not items:
-        return (
-            '<div style="text-align:center;padding:48px 24px;color:#9CA3AF">'
-            '  <div style="font-size:16px;margin-bottom:12px;color:#9CA3AF;font-weight:600">WARDROBE</div>'
-            '  <div style="font-size:15px;font-weight:600;color:#6B7280">No items yet</div>'
-            '  <div style="font-size:13px;margin-top:4px">Go to Add Clothes to upload your wardrobe.</div>'
-            '</div>'
-        )
-    cards = "".join(f'<div>{_item_card_html(i)}</div>' for i in items)
-    return (
-        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);'
-        f'gap:8px;padding:4px 0">{cards}</div>'
-    )
+        return """
+<div style="text-align:center;padding:64px 24px;color:#6B7280">
+  <div style="font-size:40px;margin-bottom:16px">◻</div>
+  <div style="font-size:17px;font-weight:600;color:#374151;margin-bottom:8px">
+    Your wardrobe is empty</div>
+  <div style="font-size:14px;color:#6B7280">
+    Add a few clothes and CloseCall can start building outfits.</div>
+</div>
+"""
+
+    # Group by category for section headers
+    by_cat: dict[str, list] = {}
+    for item in items:
+        cat = item.get("category", "other")
+        by_cat.setdefault(cat, []).append(item)
+
+    cat_display = {
+        "top": "Tops", "bottom": "Bottoms", "one_piece": "One-pieces",
+        "footwear": "Footwear", "outerwear": "Outerwear", "other": "Other",
+    }
+
+    html = ""
+    for cat, cat_items in by_cat.items():
+        label = cat_display.get(cat, cat.title())
+        html += _section_header_html(label, len(cat_items))
+        cards = "".join(f'<div>{_item_card_html(i)}</div>' for i in cat_items)
+        html += f'<div class="cc-wardrobe-grid">{cards}</div>'
+
+    return html
 
 
 # ─── event handlers ───────────────────────────────────────────────────────────
 
 def handle_filter(category_label: str, search: str) -> str:
-    cat = _CATEGORY_MAP.get(category_label, "")
+    cat   = _CATEGORY_MAP.get(category_label, "")
     items = get_items_by_category(category=cat)
     if search.strip():
-        q = search.strip().lower()
+        q     = search.strip().lower()
         items = [
             i for i in items
-            if q in (i.get("color","") + i.get("subtype","") + (i.get("label") or "")).lower()
+            if q in (
+                (i.get("color") or "") + " " +
+                (i.get("subtype") or "") + " " +
+                (i.get("label") or "")
+            ).lower()
         ]
     return _grid_html(items)
 
 
-def handle_refresh_grid() -> tuple[str, list[str]]:
-    items = get_all_items()
-    return _grid_html(items), [
-        f"{i['item_id']} — {i.get('color','')} {i.get('subtype','')}"
-        for i in items
+def _item_choices() -> list[str]:
+    return [
+        f"{i['item_id']} — {i.get('color', '')} {i.get('subtype', '')}"
+        for i in get_all_items()
     ]
 
 
 # ─── tab builder ──────────────────────────────────────────────────────────────
 
-def build_wardrobe_tab(go_edit_fn) -> None:
+def build_wardrobe_tab(go_add_fn, go_edit_fn) -> None:
     """
     Build the Wardrobe tab.
 
     Parameters
     ----------
+    go_add_fn : callable
+        Switches to Add Clothes sub-view.
     go_edit_fn : callable(item_id: str)
-        Called when user selects an item to edit from the dropdown.
+        Switches to Item Detail sub-view with the given item pre-loaded.
     """
 
-    with gr.Column(elem_classes=["cc-screen"]):
+    with gr.Column(elem_classes=["cc-page"]):
 
-        # ── Header ────────────────────────────────────────────────────────────
-        with gr.Row():
-            gr.HTML(
-                '<div style="font-size:20px;font-weight:700;color:#1C1C1E;'
-                'padding:8px 0 12px;flex:1">My Wardrobe</div>'
-            )
-            refresh_btn = gr.Button("🔄", size="sm", elem_classes=["cc-chip"])
+        # ── Page header ───────────────────────────────────────────────────────
+        with gr.Row(elem_id="wardrobe-header"):
+            gr.HTML("""
+<div style="padding: 40px 0 20px">
+  <h2 style="font-size:clamp(22px,2.5vw,32px);font-weight:800;color:#1A1A1A;
+      letter-spacing:-0.5px;margin:0">My Wardrobe</h2>
+</div>
+""")
+            with gr.Column(scale=0, min_width=160):
+                gr.HTML('<div style="padding-top:40px"></div>')
+                add_btn = gr.Button("+ Add clothes", elem_classes=["cc-btn-accent"])
 
-        # ── Search ────────────────────────────────────────────────────────────
+        # ── Search bar ────────────────────────────────────────────────────────
         search_input = gr.Textbox(
-            placeholder="Search items...",
+            placeholder="Search your wardrobe…",
             show_label=False,
             max_lines=1,
             elem_classes=["cc-input"],
         )
 
         # ── Filter chips ──────────────────────────────────────────────────────
+        gr.HTML('<div style="height:12px"></div>')
         active_filter = gr.State("All")
 
         with gr.Row(elem_classes=["cc-chips"]):
@@ -154,30 +200,40 @@ def build_wardrobe_tab(go_edit_fn) -> None:
                 for label in _CATEGORY_FILTERS
             ]
 
+        gr.HTML('<div style="height:8px"></div>')
+
         # ── Wardrobe grid ─────────────────────────────────────────────────────
         grid_html = gr.HTML(_grid_html(get_all_items()))
 
-        # ── Item selector (for edit) ──────────────────────────────────────────
-        gr.HTML('<div class="cc-label" style="margin-top:16px">Tap to edit an item</div>')
-        edit_picker = gr.Dropdown(
-            label="Select item",
-            choices=[
-                f"{i['item_id']} — {i.get('color','')} {i.get('subtype','')}"
-                for i in get_all_items()
-            ],
-            value=None,
-            allow_custom_value=False,
-            show_label=False,
-            elem_classes=["cc-select"],
-        )
-        edit_btn = gr.Button("✏️  Edit Selected Item", elem_classes=["cc-btn-secondary"])
+        # ── Item picker for edit ──────────────────────────────────────────────
+        gr.HTML("""
+<hr style="border:none;border-top:1px solid #E8E5E0;margin:32px 0 20px">
+<div style="font-size:11px;font-weight:700;letter-spacing:1px;
+     text-transform:uppercase;color:#6B7280;margin-bottom:10px">
+  Edit an item
+</div>
+""")
+        with gr.Row():
+            with gr.Column(scale=3):
+                edit_picker = gr.Dropdown(
+                    choices=_item_choices(),
+                    value=None,
+                    show_label=False,
+                    allow_custom_value=False,
+                    elem_classes=["cc-select"],
+                    label="Select item to edit",
+                )
+            with gr.Column(scale=1, min_width=140):
+                edit_btn = gr.Button("Edit tags →", elem_classes=["cc-btn-secondary"])
+
+        gr.HTML('<div style="height:40px"></div>')
 
         # ── Wire filter chips ─────────────────────────────────────────────────
         for btn, label in zip(filter_btns, _CATEGORY_FILTERS):
             btn.click(
-                fn=lambda s, lbl=label: handle_filter(lbl, s),
+                fn=lambda s, lbl=label: (handle_filter(lbl, s), lbl),
                 inputs=[search_input],
-                outputs=[grid_html],
+                outputs=[grid_html, active_filter],
             )
 
         # Live search
@@ -187,18 +243,12 @@ def build_wardrobe_tab(go_edit_fn) -> None:
             outputs=[grid_html],
         )
 
-        # Refresh
-        refresh_btn.click(
-            fn=lambda: handle_refresh_grid()[0],
-            outputs=[grid_html],
-        ).then(
-            fn=lambda: gr.update(choices=handle_refresh_grid()[1]),
-            outputs=[edit_picker],
-        )
-
-        # Edit selected item
+        # Edit
         edit_btn.click(
             fn=lambda choice: go_edit_fn(choice.split(" — ")[0] if choice else ""),
             inputs=[edit_picker],
             outputs=[],
         )
+
+        # Add clothes nav
+        add_btn.click(fn=go_add_fn, outputs=[])

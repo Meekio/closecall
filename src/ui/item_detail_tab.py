@@ -186,7 +186,7 @@ def build_item_detail_tab() -> gr.State:
             )
             # Live formality label
             formality_label_html = gr.HTML(
-                f'<div style="text-align:center;font-size:13px;color:#6B7280;margin-bottom:8px">'
+                f'<div style="text-align:center;font-size:13px;color:#374151;margin-bottom:8px">'
                 f'2 · Casual</div>'
             )
             formality_slider.change(

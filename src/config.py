@@ -25,8 +25,8 @@ class Config:
     IMAGE_STORAGE_PATH: Path = Path(os.getenv("IMAGE_STORAGE_PATH", "./data/images"))
 
     # Model names — configurable via GEMINI_MODEL env var
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
-    GEMINI_VISION_MODEL: str = os.getenv("GEMINI_VISION_MODEL", "gemini-3.5-flash")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    GEMINI_VISION_MODEL: str = os.getenv("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 
     @classmethod
     def validate(cls) -> None:

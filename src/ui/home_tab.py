@@ -1,13 +1,9 @@
 """
-Screen 1 (Splash/Welcome) + Screen 2 (Home)
-─────────────────────────────────────────────
-Splash is shown only on first load via a gr.State flag.
-Home shows:
-  • Greeting + sparkle
-  • Natural-language request input
-  • Quick-pick occasion chips
-  • Live weather widget
-  • Quick-action buttons (Add Clothes / My Wardrobe)
+Home Tab — CloseCall
+─────────────────────
+Desktop: wide hero heading, full-width request box, chip row,
+         two-column context cards (weather + wardrobe count), quick actions.
+Mobile:  everything stacks vertically, request box stays the visual focus.
 """
 
 from __future__ import annotations
@@ -22,38 +18,33 @@ from src.database.db import get_all_items
 def _weather_html() -> str:
     profile = load_profile()
     w = get_weather(profile.get("location", "Mumbai"))
-    icon = "Rain" if w.get("is_raining") else ""
-    cond = w.get("description", w.get("condition", ""))
-    temp = w.get("temperature_c", "–")
-    city = w.get("location", profile.get("location", ""))
-    return (
-        f'<div class="cc-weather">'
-        f'  <span style="font-size:24px">{icon}</span>'
-        f'  <div>'
-        f'    <div class="cc-weather-city">{city}</div>'
-        f'    <div class="cc-weather-desc">{temp}°C · {cond.title()}</div>'
-        f'  </div>'
-        f'</div>'
-    )
-
-
-def _wardrobe_count() -> int:
-    return len(get_all_items())
-
-
-# ─── splash HTML ──────────────────────────────────────────────────────────────
-
-_SPLASH_HTML = """
-<div class="cc-splash-bg" style="min-height:100vh;display:flex;flex-direction:column;
-     align-items:center;justify-content:center;padding:40px 24px;text-align:center;
-     background:linear-gradient(160deg,#FDF6F0 0%,#F3E8FF 100%)">
-  <div style="font-size:48px;margin-bottom:20px;font-weight:300;letter-spacing:2px">CC</div>
-  <div class="cc-splash-logo" style="font-size:40px;font-weight:800;
-       letter-spacing:-1px;color:#1C1C1E">CloseCall</div>
-  <div style="font-size:16px;color:#6B7280;margin:10px 0 48px;line-height:1.6;max-width:280px">
-    Your Personal Stylist<br>
-    <span style="font-size:14px">Outfits from your wardrobe,<br>for every mood and moment.</span>
+    is_rain = w.get("is_raining", False)
+    cond    = w.get("description", w.get("condition", "")).title()
+    temp    = w.get("temperature_c", "–")
+    city    = w.get("location", profile.get("location", ""))
+    icon    = "🌧️" if is_rain else "☀️" if "clear" in cond.lower() else "⛅"
+    return f"""
+<div class="cc-weather-widget">
+  <span style="font-size:28px;line-height:1">{icon}</span>
+  <div>
+    <div style="font-size:14px;font-weight:700;color:#1D3A8A">{city}</div>
+    <div style="font-size:13px;color:#3B5FBF;margin-top:2px">{temp}°C · {cond}</div>
   </div>
+</div>
+"""
+
+
+def _wardrobe_stat_html() -> str:
+    items = get_all_items()
+    total = len(items)
+    clean = sum(1 for i in items if i.get("status") == "clean")
+    return f"""
+<div style="background:#FFFFFF;border:1px solid #E8E5E0;border-radius:12px;
+     padding:16px 20px;height:100%">
+  <div style="font-size:11px;font-weight:700;letter-spacing:1px;
+       text-transform:uppercase;color:#6B7280;margin-bottom:8px">YOUR WARDROBE</div>
+  <div style="font-size:24px;font-weight:800;color:#1A1A1A">{total} items</div>
+  <div style="font-size:13px;color:#374151;margin-top:2px">{clean} clean · ready to wear</div>
 </div>
 """
 
@@ -62,93 +53,140 @@ _SPLASH_HTML = """
 
 def build_home_tab(go_add_clothes_fn, go_wardrobe_fn, on_request_fn) -> None:
     """
-    Build the Home tab.
+    Build the Home tab inside the active gr.Blocks context.
 
     Parameters
     ----------
     go_add_clothes_fn : callable
-        Called (with no args) when "Add Clothes" quick-action is clicked.
-        Should switch the outer Tabs to the Wardrobe/Add tab.
+        Switches to Wardrobe tab → Add Clothes sub-view.
     go_wardrobe_fn : callable
-        Called when "My Wardrobe" quick-action is clicked.
-    on_request_fn : callable(request_text) -> None
-        Called when the user submits a request; should switch to Outfits tab
-        and pre-fill the request there.
+        Switches to Wardrobe tab → grid sub-view.
+    on_request_fn : callable(request_text)
+        Pre-fills Outfits tab and switches to it.
     """
 
-    with gr.Column(elem_classes=["cc-screen"]):
+    with gr.Column(elem_classes=["cc-page"]):
 
-        # ── Greeting ──────────────────────────────────────────────────────────
-        with gr.Row():
-            gr.HTML(
-                '<div style="padding:8px 0 4px">'
-                '  <div style="font-size:22px;font-weight:700;color:#1C1C1E">'
-                '    Hi!'
-                '  </div>'
-                '  <div style="font-size:15px;color:#6B7280;margin-top:2px">'
-                '    What are you dressing for today?'
-                '  </div>'
-                '</div>'
-            )
+        # ── Hero heading ──────────────────────────────────────────────────────
+        gr.HTML("""
+<div style="padding: 48px 0 32px">
+  <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;
+       text-transform:uppercase;color:#6B7280;margin-bottom:16px">
+    CloseCall — Your Personal Stylist
+  </div>
+  <h1 style="font-size:clamp(28px,4vw,52px);font-weight:800;color:#1A1A1A;
+       letter-spacing:-1.5px;line-height:1.1;margin:0 0 14px">
+    Your wardrobe.<br>Your plans.<br>
+    <span style="color:#7C5CFC">One outfit that works.</span>
+  </h1>
+  <p style="font-size:clamp(14px,1.4vw,17px);color:#374151;
+      line-height:1.6;max-width:540px;margin:0">
+    Describe what you need and CloseCall reasons over your
+    real wardrobe — checking weather, occasion, and formality —
+    to recommend outfits that actually fit your day.
+  </p>
+</div>
+""")
 
-        # ── NL request input ─────────────────────────────────────────────────
+        # ── Request input ─────────────────────────────────────────────────────
+        gr.HTML("""
+<div style="font-size:11px;font-weight:700;letter-spacing:1px;
+     text-transform:uppercase;color:#6B7280;margin-bottom:8px">
+  What are you dressing for?
+</div>
+""")
         request_input = gr.Textbox(
-            placeholder="e.g. office outfit for rainy day",
+            placeholder='"Casual office outfit for a rainy day…"',
             show_label=False,
             lines=1,
-            max_lines=2,
+            max_lines=3,
             elem_classes=["cc-input"],
         )
 
-        # ── Quick-pick occasion chips ─────────────────────────────────────────
-        gr.HTML('<div style="font-size:12px;color:#9CA3AF;margin:4px 0 2px">Quick picks</div>')
-        with gr.Row(elem_classes=["cc-chips"]):
-            chip_work    = gr.Button("Work",    elem_classes=["cc-chip"], size="sm")
-            chip_casual  = gr.Button("Casual",  elem_classes=["cc-chip"], size="sm")
-            chip_college = gr.Button("College", elem_classes=["cc-chip"], size="sm")
-        with gr.Row(elem_classes=["cc-chips"]):
-            chip_party   = gr.Button("Party",   elem_classes=["cc-chip"], size="sm")
-            chip_date    = gr.Button("Date",    elem_classes=["cc-chip"], size="sm")
-            chip_travel  = gr.Button("Travel",  elem_classes=["cc-chip"], size="sm")
-
-        # ── Weather widget ────────────────────────────────────────────────────
-        weather_html = gr.HTML(_weather_html())
-
-        gr.Button(
-            "🔄 Refresh weather",
-            size="sm",
-            elem_classes=["cc-chip"],
-        ).click(
-            fn=lambda: _weather_html(),
-            outputs=[weather_html],
-        )
-
-        # ── Submit request button ─────────────────────────────────────────────
-        submit_btn = gr.Button(
-            "→  Get outfit suggestions",
+        get_outfits_btn = gr.Button(
+            "Get outfit suggestions →",
             elem_classes=["cc-btn-primary"],
         )
 
-        # ── Quick actions ─────────────────────────────────────────────────────
-        gr.HTML('<div class="cc-label" style="margin-top:20px">Quick Actions</div>')
+        # ── Quick-pick chips ──────────────────────────────────────────────────
+        gr.HTML("""
+<div style="font-size:12px;color:#6B7280;margin:20px 0 8px;font-weight:500">
+  Try asking
+</div>
+""")
+        with gr.Row(elem_classes=["cc-chips"],
+                    elem_id="home-chips"):
+            chip_work    = gr.Button("Work",    elem_classes=["cc-chip"], size="sm")
+            chip_casual  = gr.Button("Casual",  elem_classes=["cc-chip"], size="sm")
+            chip_date    = gr.Button("Date",    elem_classes=["cc-chip"], size="sm")
+            chip_college = gr.Button("College", elem_classes=["cc-chip"], size="sm")
+            chip_travel  = gr.Button("Travel",  elem_classes=["cc-chip"], size="sm")
+
+        # Add a small gap
+        gr.HTML('<div style="height:28px"></div>')
+
+        # ── Context cards — weather + wardrobe (two columns on desktop) ───────
+        gr.HTML("""
+<div style="font-size:11px;font-weight:700;letter-spacing:1px;
+     text-transform:uppercase;color:#6B7280;margin-bottom:10px">TODAY</div>
+""")
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=1, min_width=220):
+                weather_widget = gr.HTML(_weather_html())
+            with gr.Column(scale=1, min_width=220):
+                wardrobe_stat  = gr.HTML(_wardrobe_stat_html())
+
+        # Refresh weather button
+        gr.Button(
+            "↻  Refresh weather",
+            size="sm",
+            elem_classes=["cc-btn-ghost"],
+        ).click(fn=_weather_html, outputs=[weather_widget])
+
+        gr.HTML('<div style="height:32px"></div>')
+
+        # ── Quick action buttons ──────────────────────────────────────────────
+        gr.HTML("""
+<div style="font-size:11px;font-weight:700;letter-spacing:1px;
+     text-transform:uppercase;color:#6B7280;margin-bottom:10px"></div>
+""")
         with gr.Row():
-            btn_add  = gr.Button("Add Clothes",    elem_classes=["cc-action-card"])
-            btn_ward = gr.Button("My Wardrobe",    elem_classes=["cc-action-card"])
+            with gr.Column(scale=1):
+                btn_add = gr.Button(
+                    "+ Add clothes",
+                    elem_classes=["cc-btn-secondary"],
+                )
+            with gr.Column(scale=1):
+                btn_wardrobe = gr.Button(
+                    "View wardrobe →",
+                    elem_classes=["cc-btn-ghost"],
+                )
+
+        gr.HTML('<div style="height:40px"></div>')
 
         # ── Wire chips → fill input ───────────────────────────────────────────
-        for chip, text in [
+        _chip_prompts = [
             (chip_work,    "I need an outfit for work today."),
-            (chip_casual,  "Something casual and comfortable."),
+            (chip_casual,  "Something casual and comfortable for today."),
+            (chip_date,    "A dinner date tonight — suggest something nice."),
             (chip_college, "Outfit for college today."),
-            (chip_party,   "I have a party tonight."),
-            (chip_date,    "A dinner date tonight."),
             (chip_travel,  "Travelling today, need something comfortable."),
-        ]:
+        ]
+        for chip, text in _chip_prompts:
             chip.click(fn=lambda t=text: t, outputs=[request_input])
 
-        # ── Submit → delegate to parent ───────────────────────────────────────
-        submit_btn.click(fn=on_request_fn, inputs=[request_input], outputs=[])
+        # ── Submit ────────────────────────────────────────────────────────────
+        get_outfits_btn.click(
+            fn=on_request_fn,
+            inputs=[request_input],
+            outputs=[],
+        )
+        request_input.submit(
+            fn=on_request_fn,
+            inputs=[request_input],
+            outputs=[],
+        )
 
-        # ── Quick action nav ──────────────────────────────────────────────────
+        # ── Quick nav ─────────────────────────────────────────────────────────
         btn_add.click(fn=go_add_clothes_fn, outputs=[])
-        btn_ward.click(fn=go_wardrobe_fn,   outputs=[])
+        btn_wardrobe.click(fn=go_wardrobe_fn, outputs=[])
