@@ -336,13 +336,13 @@ Three properties distinguish this from a single-shot LLM call or a static rule-b
 
 ### Key Dependencies
 ```
-anthropic
-google-generativeai
+google-genai
 gradio
 pillow
 python-dotenv
 requests
-scikit-learn
+sqlalchemy
+pydantic
 ```
 
 ### Project Structure
