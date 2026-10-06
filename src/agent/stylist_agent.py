@@ -207,25 +207,31 @@ class StylistAgent:
                 ]
                 response_text = "\n".join(text_parts).strip()
                 looks_like_recommendation = "item_" in response_text
-                
+
                 if (
                     ENFORCE_VALIDATION_BEFORE_FINAL_ANSWER
                     and looks_like_recommendation
                     and not validity_was_called
                     and _round < MAX_REASONING_ROUNDS - 1
                 ):
-                    # Guardrail 2: Force validation before accepting final answer
-                    print(f"⚠️  VALIDATION GUARD: Final response contains item_ids but no validation ran. Forcing validation check.")
+                    # Guardrail 2: inject correction as a FUNCTION RESPONSE so
+                    # history ordering stays valid (user text after a non-tool
+                    # model turn is fine — but we must NOT inject between a
+                    # function-call turn and its response turn).
+                    print("⚠️  VALIDATION GUARD: item_ids in response but no validation ran. Forcing.")
+                    # Remove the model's text turn we just appended — we're going to re-prompt
+                    self.conversation_memory.pop()
                     self.conversation_memory.append(
                         genai_types.Content(
                             role="user",
                             parts=[genai_types.Part.from_text(
-                                text="You must call check_outfit_validity on your candidate outfit before giving a final answer. Please validate it now."
+                                text="You must call check_outfit_validity on your candidate "
+                                     "outfit before giving a final answer. Please validate it now."
                             )],
                         )
                     )
-                    continue  # loop again instead of accepting this as final
-                
+                    continue
+
                 print(f"💬 FINAL TEXT at round {_round} ({len(response_text)} chars)")
                 break
 
@@ -274,9 +280,18 @@ class StylistAgent:
         if not response_text:
             response_text = "I couldn't generate a response. Please try again."
 
-        # Trim history to last 20 Content objects to avoid token overflow
+        # Trim history to last 20 Content objects, always keeping pairs intact.
+        # Never trim to an odd offset that could split a function-call turn
+        # from its function-response turn.
         if len(self.conversation_memory) > 20:
-            self.conversation_memory = self.conversation_memory[-20:]
+            trimmed = self.conversation_memory[-20:]
+            # If the first entry is a user turn with function_response parts,
+            # it's an orphaned response — drop it too.
+            while trimmed and all(
+                hasattr(p, "function_response") for p in trimmed[0].parts
+            ):
+                trimmed = trimmed[1:]
+            self.conversation_memory = trimmed
 
         return response_text
 
